@@ -198,6 +198,26 @@ inflows to endpoints. A real instance of settled-but-not-indexed needs a
 settlement matching a specific resource's advertised price and timing, with no
 row — which is exactly what `/diagnose` classifies per-resource.
 
+**Round 4 (same day): a payer provenance registry makes that false-positive
+class mechanical.** The reviewer proposed a registry of known platform payout
+wallets with per-entry provenance — "your probe reclassifies an inflow the
+moment it recognises the payer." Both initial rows were verified first-hand
+from chain data before entry:
+
+| wallet | platform | provenance tier | evidence |
+|---|---|---|---|
+| `0xddc6cc3e…33f7` | Taskmarket | `tx_hash_confirmed` | completed-award record publishes `settlementTxHash`; receipt re-read on chain: status `0x1`, block 50205488, one sender paying ten workers × 0.092500 + one fee × 0.075000 — matching the published split to the unit |
+| `0x26572ff2…b422` | Frantic | `amount_timestamp_join` | bounty records publish amount+timestamp only; block 50236577 carries exactly one 8.000000 USDC transfer from this wallet (3 s after the PAID event) |
+
+The registry ships at
+[fixtures/platform_payout_wallets.json](fixtures/platform_payout_wallets.json);
+`scan` and `never` load it automatically (`--registry none` disables) and:
+label each **payer** with `{platform, provenance}` or explicit nulls when
+unrecognized; and **self-label** a scanned wallet that is itself a known payout
+wallet (`wallet_label.source: registry_self`) — its inflows are platform
+funding, not endpoint revenue. Absence of a label is not evidence of absence;
+a row without provenance is rejected at load time.
+
 ## Tests
 
 ```sh
