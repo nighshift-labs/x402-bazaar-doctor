@@ -65,11 +65,19 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
       **Build command:** `pip install "x402[all]" starlette uvicorn`
       (the repo ships no requirements.txt — set this explicitly).
       **Start command:**
-      `uvicorn x402_endpoint:create_app --factory --host 0.0.0.0 --port $PORT`
+      `uvicorn x402_endpoint:create_app --factory --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
       (**verified live 23:1xZ**: the app is a factory — `create_app`, not a
       module-level `app`; plain `:app` fails with
       `Attribute "app" not found in module`. Smoke after this fix: `/health`
-      200 fail-closed, unpaid `/diagnose` → 402, `/sample` → 200.)
+      200 fail-closed, unpaid `/diagnose` → 402, `/sample` → 200.
+      The `--proxy-headers --forwarded-allow-ips='*'` flags are also
+      verified-live and REQUIRED behind Render's TLS proxy: without them the
+      402 body's `resource` URL is built from `request.url` as
+      `http://<internal>` and every paid verification would mismatch. With
+      them, `X-Forwarded-Proto: https` + public Host reproduce the exact
+      public origin (`https://…onrender.com/diagnose` confirmed). Trusting
+      `'*'` is safe here because Render does not expose the service port to
+      the public internet — only their proxy reaches it.)
    3. Instance: **Free** ($0/mo, verified on render.com/pricing) is fine for
       the demand measurement; it spins down when idle, so the first call after
       quiet periods pays a cold start. If that proves hostile to agent
