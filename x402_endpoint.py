@@ -246,13 +246,18 @@ async def diagnose_endpoint(request: Request):
 
 
 async def health(request: Request):
+    gate = getattr(request.app.state, "payment_gate", None)
+    if gate and gate.get("mode") != "fail_closed":
+        payment_gate = f"{gate['mode']} via {gate.get('facilitator', 'unknown')}"
+    else:
+        payment_gate = "fail-closed until verifier wired"
     return JSONResponse(
         {
             "status": "ok",
             "service": "x402-bazaar-doctor",
             "price": PAYWALL_PRICE_HUMAN,
             "rail": "native USDC on Base",
-            "payment_gate": "fail-closed until verifier wired",
+            "payment_gate": payment_gate,
         }
     )
 
@@ -266,7 +271,7 @@ async def sample(request: Request):
     )
 
 
-def create_app(payment_verifier=None) -> Starlette:
+def create_app(payment_verifier=None, payment_gate=None) -> Starlette:
     app = Starlette(
         routes=[
             Route("/diagnose", diagnose_endpoint, methods=["POST"]),
@@ -275,6 +280,7 @@ def create_app(payment_verifier=None) -> Starlette:
         ]
     )
     app.state.payment_verifier = payment_verifier
+    app.state.payment_gate = payment_gate or {"mode": "fail_closed"}
     return app
 
 
@@ -283,4 +289,13 @@ if __name__ == "__main__":  # manual smoke only; see deploy runbook for producti
 
     import uvicorn
 
-    uvicorn.run(create_app(), host="127.0.0.1", port=int(os.environ.get("PORT", "8787")))
+    from x402_verifier import verifier_from_env
+
+    verifier, gate = verifier_from_env()
+    print(f"payment gate: {gate['mode']}"
+          + (f" ({gate.get('facilitator')})" if gate.get("facilitator") else ""))
+    uvicorn.run(
+        create_app(payment_verifier=verifier, payment_gate=gate),
+        host="127.0.0.1",
+        port=int(os.environ.get("PORT", "8787")),
+    )
