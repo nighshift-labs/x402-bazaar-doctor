@@ -135,8 +135,17 @@ The same classifier runs as an x402 V2-payable HTTP resource:
 
 **Public deployment is pending hosting acceptance** — see
 [deploy/x402-endpoint-runbook.md](deploy/x402-endpoint-runbook.md).
-Until a public origin is announced here, use the CLI above or open an issue
-for the fixed-scope 25-USDC report offer.
+Until a public origin is announced here, two paths work today:
+
+- **Free self-serve:** run the CLI above on your own observation JSON.
+- **Fixed-scope 25-USDC report:** open an issue with your redacted
+  observation (fields above). You receive the one-page classified report
+  first; payment is requested only after you accept it — **25 USDC,
+  native USDC on Base mainnet only** (contract
+  `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`, Circle's official USDC),
+  receive address `0x940445bEf451033D92929A22c7bf6ee72947267c`.
+  No deposits, no prepayment, no refunds (receive-only address). Never
+  include signatures, keys, or credentials in an issue.
 
 ## On-chain demand probe (settlement-side measurement)
 
