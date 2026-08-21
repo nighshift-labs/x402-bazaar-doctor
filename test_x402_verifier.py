@@ -7,6 +7,8 @@ signing, no live facilitator calls.
 """
 import base64
 import json
+import os
+import sys
 import unittest
 
 from starlette.testclient import TestClient
@@ -180,9 +182,44 @@ class VerifierBehaviourTests(unittest.TestCase):
 
 
 class ExtraHeadersTests(unittest.TestCase):
-    def test_extra_headers_reach_client_config(self):
+    """Auth headers must survive the real package's wire contract.
+
+    The official client's dict-config path wraps ``create_headers`` in
+    ``CreateHeadersAuthProvider``, which calls it once per HTTP request and
+    expects a *grouped* result: ``{"verify": {...}, "settle": {...},
+    "supported": {...}}``. A flat header dict is silently dropped — requests
+    go out unauthenticated. These tests pin the grouped, per-request shape.
+    """
+
+    def test_extra_headers_reach_client_config_grouped_per_request(self):
         captured = {}
-        headers = {"X-API-KEY": "secret-value"}
+        calls = []
+
+        def factory(config):
+            captured.update(config)
+            return _FakeFacilitator(config)
+
+        def create_headers():
+            calls.append(1)
+            return {"verify": {"X-API-KEY": "v1"}, "settle": {"X-API-KEY": "s1"}}
+
+        verifier, _ = make_verifier(
+            "https://facilitator.example",
+            client_factory=factory,
+            extra_headers=create_headers,
+        )
+        self.assertTrue(callable(verifier))
+        built = captured["create_headers"]()
+        # Grouped contract: per-operation header sets.
+        self.assertEqual(built["verify"], {"X-API-KEY": "v1"})
+        self.assertEqual(built["settle"], {"X-API-KEY": "s1"})
+        # Per-request freshness: invoked through the provider each call.
+        captured["create_headers"]()
+        self.assertEqual(len(calls), 2)
+
+    def test_flat_static_headers_are_wrapped_into_groups(self):
+        """Static env JSON still works, but is re-shaped into the grouped form."""
+        captured = {}
 
         def factory(config):
             captured.update(config)
@@ -191,11 +228,12 @@ class ExtraHeadersTests(unittest.TestCase):
         verifier, _ = make_verifier(
             "https://facilitator.example",
             client_factory=factory,
-            extra_headers=headers,
+            extra_headers={"X-API-KEY": "secret-value"},
         )
         self.assertTrue(callable(verifier))
-        built = captured["create_headers"]()
-        self.assertEqual(built, headers)
+        provider_built = captured["create_headers"]()
+        self.assertEqual(provider_built["verify"], {"X-API-KEY": "secret-value"})
+        self.assertEqual(provider_built["supported"], {"X-API-KEY": "secret-value"})
 
     def test_no_extra_headers_leaves_config_without_auth(self):
         captured = {}
@@ -206,6 +244,73 @@ class ExtraHeadersTests(unittest.TestCase):
 
         make_verifier("https://facilitator.example", client_factory=factory)
         self.assertNotIn("create_headers", captured)
+
+    def test_config_dict_is_accepted_by_real_package_client(self):
+        """The config we build must construct the REAL package client.
+
+        Regression guard: an earlier revision passed ``create_headers`` as a
+        FacilitatorConfig dataclass kwarg, which raises TypeError on
+        construction (the field does not exist) and was never exercised.
+        """
+        try:
+            from x402.http.facilitator_client import (  # noqa: F401
+                FacilitatorConfig,
+                HTTPFacilitatorClientSync,
+            )
+        except ImportError:
+            self.skipTest("official x402 package not installed")
+        import x402_verifier
+
+        cfg = x402_verifier._client_config(
+            "https://facilitator.example",
+            extra_headers={"X-API-KEY": "k"},
+        )
+        client = HTTPFacilitatorClientSync(cfg)  # must not raise
+        self.assertEqual(client.url, "https://facilitator.example")
+
+    def test_headers_command_is_invoked_per_request_and_grouped(self):
+        import x402_verifier
+
+        script = (
+            'import json,os,sys; sys.stdout.write(json.dumps('
+            '{"verify": {"Authorization": "Bearer tok-" + os.environ.get("PROBE_N","0")}, '
+            '"settle": {"Authorization": "Bearer tok-s"}}))'
+        )
+        verifier, gate = make_verifier(
+            "https://facilitator.example",
+            headers_command=[sys.executable, "-c", script],
+            client_factory=lambda cfg: _FakeFacilitator(cfg),
+        )
+        self.assertTrue(callable(verifier))
+        self.assertEqual(gate["auth"], "command")
+        # Each invocation must produce fresh output (env changes between calls).
+        os.environ["PROBE_N"] = "1"
+        try:
+            first = gate["create_headers_probe"]()
+            os.environ["PROBE_N"] = "2"
+            second = gate["create_headers_probe"]()
+        finally:
+            os.environ.pop("PROBE_N", None)
+        self.assertIn("tok-1", json.dumps(first))
+        self.assertIn("tok-2", json.dumps(second))
+
+    def test_headers_command_failure_raises_not_silently_authenticates(self):
+        # A broken mint script must fail at BOOT (startup probe), not on the
+        # first paid call — and never yield unauthenticated requests.
+        with self.assertRaises(RuntimeError):
+            make_verifier(
+                "https://facilitator.example",
+                headers_command=[sys.executable, "-c", "raise SystemExit(3)"],
+                client_factory=lambda cfg: _FakeFacilitator(cfg),
+            )
+
+    def test_headers_command_and_static_headers_are_mutually_exclusive(self):
+        with self.assertRaises(ValueError):
+            make_verifier(
+                "https://facilitator.example",
+                extra_headers={"X-API-KEY": "k"},
+                headers_command=["false"],
+            )
 
 
 class VerifierFromEnvTests(unittest.TestCase):
