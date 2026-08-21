@@ -44,7 +44,17 @@ operator). The reducer's discipline:
 - the unpaid-400 finding reports its rule status honestly: instances on one
   `payTo` cluster are `single_instance` (field-observed); a second distinct
   cluster flips it to `multi_instance`. Two hostnames of ONE operator both
-  answering `400` must not upgrade a note into a rule.
+  answering `400` must not upgrade a note into a rule;
+- the no-`payto` branch of that rule is currently **dormant**: the
+  publisher's catalog-wide coverage table (#3045 comment 5372262095,
+  2026-08-21) shows all 15,058 indexed rows carry `payTo` — zero real rows
+  exercise it today, so it is guarded but untested against real data and
+  every summary states which state it is in;
+- `payTo` is an operator **proxy**, not identity: two independent operators
+  settling to one custodial/facilitator-managed wallet read as a single
+  cluster, so `single_instance` UNDER-fires in exactly that case. Wallet
+  ownership needs an operator to confirm — the summary carries this caveat
+  wherever cluster counts appear.
 
 The publisher's clustering of our committed 49 rows is committed as
 [fixtures/x402_census_payto_clusters_2026-08-21.json](fixtures/x402_census_payto_clusters_2026-08-21.json)
