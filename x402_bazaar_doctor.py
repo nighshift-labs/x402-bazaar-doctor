@@ -149,26 +149,35 @@ def summarize_census_rows(rows):
     """Summarize catalogued-side unpaid-probe census rows (the #3045
     calibration shape delivered by novadyne-hq, 2026-08-21).
 
-    Each row: {"resource", "declared_verb", "unpaid_status", "error"}.
-    Rows must be one per netloc (operator-level independence) and must
-    use concrete paths — a templated path means the probe invented a
-    parameter, and its status is not a real ordering signal.
+    Each row: {"resource", "declared_verb", "unpaid_status", "error"} plus
+    an optional "payto" cluster label. Independence is computed over
+    `payTo`, never over hostnames: one operator can wear several netlocs,
+    so a hostname key over-counts operators (and a registrable-domain
+    collapse under-counts them — shared PaaS hosting is not a shared
+    operator). A row without "payto" is its own cluster; there is no
+    invisible fallback to hostnames. Route-level input (several rows per
+    netloc) is accepted by design; duplicate hosts are NOT an error.
+    Templated paths are still rejected — a probe with an invented
+    parameter is not a real ordering signal.
 
     Returns counts, the 400-shaped field_observed instances, the
     non-conclusive rows (kept visible, never silently dropped), and a
-    rule-status for the unpaid-400 finding: a single instance stays
-    field_observed; a second independent instance is what upgrades it
-    toward a rule.
+    rule-status for the unpaid-400 finding: instances on one payTo
+    cluster stay single_instance; a second distinct cluster is what
+    upgrades it toward multi_instance.
     """
     if not isinstance(rows, list) or not rows:
         raise ValueError("rows must be a non-empty list")
 
     from urllib.parse import urlparse
 
-    hosts = []
+    hosts = set()
+    clusters = set()
+    rows_without_payto = 0
     status_counts = {}
     verb_counts = {}
     field_observed_400 = []
+    field_observed_400_clusters = set()
     non_conclusive = []
     for row in rows:
         resource = row.get("resource") or ""
@@ -176,17 +185,22 @@ def summarize_census_rows(rows):
         host = parsed.netloc
         if not host:
             raise ValueError(f"row has no netloc: {resource!r}")
-        if host in hosts:
-            raise ValueError(
-                f"duplicate netloc breaks operator-level independence: {host}"
-            )
         path = parsed.path
         if "{" in path or "<" in path or ":" in path.split("/")[-1]:
             raise ValueError(
                 "templated path: a probe with an invented parameter is not "
                 f"a real ordering signal: {resource!r}"
             )
-        hosts.append(host)
+        hosts.add(host)
+
+        payto = row.get("payto")
+        if payto:
+            cluster_key = f"payto:{payto}"
+        else:
+            # Own cluster, never merged by hostname fallback.
+            rows_without_payto += 1
+            cluster_key = f"no-payto:{resource}"
+        clusters.add(cluster_key)
 
         verb = row.get("declared_verb")
         verb_counts[verb] = verb_counts.get(verb, 0) + 1
@@ -204,20 +218,27 @@ def summarize_census_rows(rows):
                     "resource": resource,
                     "declared_verb": verb,
                     "unpaid_status": status,
+                    "payto_cluster": payto,
                 }
             )
+            field_observed_400_clusters.add(cluster_key)
 
     conclusive = sum(status_counts.values())
     return {
         "rows": len(rows),
         "distinct_hosts": len(hosts),
+        "distinct_payto_clusters": len(clusters),
+        "rows_without_payto": rows_without_payto,
         "conclusive": conclusive,
         "non_conclusive": len(non_conclusive),
         "status_counts": status_counts,
         "declared_verb_counts": verb_counts,
         "field_observed_400_rows": field_observed_400,
+        "field_observed_400_distinct_clusters": len(field_observed_400_clusters),
         "field_observed_400_rule_status": (
-            "multi_instance" if len(field_observed_400) >= 2 else "single_instance"
+            "multi_instance"
+            if len(field_observed_400_clusters) >= 2
+            else "single_instance"
         ),
         "bound_note": (
             "Zero catalogued 200-to-unpaid rows in this sample is a bound on "
