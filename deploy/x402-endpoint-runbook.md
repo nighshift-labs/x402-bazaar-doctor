@@ -29,7 +29,7 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
   - `/health` reports the active gate (`fail-closed` / `verify_only via …` /
     `verify_and_settle via …`).
 - `tools/test_x402_endpoint.py` (14 tests) + `tools/test_x402_verifier.py`
-  (27 tests) — all passing; full tools suite 387/387 (verified with the
+  (28 tests) — all passing; full tools suite 388/388 (verified with the
   official `x402==2.20.0` package installed AND without it).
 - Live smoke on 127.0.0.1:8787 with the verifier active against the real
   x402.org facilitator: `/health` 200 showing `verify_only via
@@ -53,6 +53,42 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 1. **Hosting platform.** Pick and accept terms on one of: Fly.io, Railway,
    Render, or any VPS already owned by Halli. The worker cannot accept
    platform ToS or create the account.
+
+   **Concrete recommendation (added 2026-08-21T23:0xZ, pricing verified live):
+   Render.** Cheapest path to a live origin, zero upfront cost, GitHub-native
+   (the public repo already carries the endpoint at root). Click-list —
+   everything after this is worker-executable:
+
+   1. Create account at render.com (accept ToS — Halli step).
+   2. New → Web Service → connect GitHub repo `nighshift-labs/x402-bazaar-doctor`
+      (root directory). Runtime: Python 3.
+      **Build command:** `pip install "x402[all]" starlette uvicorn`
+      (the repo ships no requirements.txt — set this explicitly).
+      **Start command:**
+      `uvicorn x402_endpoint:create_app --factory --host 0.0.0.0 --port $PORT`
+      (**verified live 23:1xZ**: the app is a factory — `create_app`, not a
+      module-level `app`; plain `:app` fails with
+      `Attribute "app" not found in module`. Smoke after this fix: `/health`
+      200 fail-closed, unpaid `/diagnose` → 402, `/sample` → 200.)
+   3. Instance: **Free** ($0/mo, verified on render.com/pricing) is fine for
+      the demand measurement; it spins down when idle, so the first call after
+      quiet periods pays a cold start. If that proves hostile to agent
+      clients, one click to Starter ($7/mo, always-on) — decide on evidence,
+      not anticipation.
+   4. Add the CDP + verifier env vars from the wiring block below as Render
+      environment variables (mark secrets). Deploy.
+   5. Hand the worker the origin URL (e.g. `https://x402-bazaar-doctor.onrender.com`)
+      — worker runs the `/supported` pre-flight, live smoke, directory
+      submissions, and announcements.
+   6. **Known trade-off of an `onrender.com` origin:** x402-list's $1
+      outgoing-payment rule is DOMAIN-based ("vercel.app, workers.dev,
+      fly.dev *and similar*"), not instance-tier based — a bare
+      `*.onrender.com` URL likely triggers it, and the worker cannot spend.
+      Consequence: with only the free subdomain, x402-list explicit
+      submission stays Halli-gated (Halli pays the $1 or points decision (d)'s
+      custom domain at the service); Bazaar passive import + Smithery + Glama
+      remain fully worker-executable. A custom domain clears the fee entirely.
+
 2. **Facilitator account (needed for real Base-mainnet settlement).** Create
    the CDP (coinbase.com/developer-platform) project and generate the API key
    pair. The worker cannot accept the CDP terms. Alternative: any other
@@ -61,21 +97,34 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
    Concrete CDP wiring (what "paste the keys" means once created):
 
    ```bash
-   # 1. Drop a mint script on the host. It reads the CDP key pair from
-   #    platform secrets and prints the grouped auth-header JSON the
-   #    verifier expects, fresh per request:
+   # 1. Drop the ready-made mint script on the host (deploy/mint_cdp_jwt.py
+   #    in this repo — tested: 17 unit tests + subprocess e2e + wire-level
+   #    proof against the official x402 client's auth provider). It reads
+   #    the CDP key pair from env and prints the grouped auth-header JSON
+   #    the verifier expects, fresh per request. Host needs only:
+   #    pip install pyjwt cryptography      (no cdp-sdk required)
    #
-   #    mint_cdp_jwt.py (sketch):
-   #      import json
-   #      from cdp.auth import jwt  # or any CDP JWT implementation
-   #      token = jwt.build_jwt(...)  # from key material in platform secrets
-   #      print(json.dumps({"verify": {"Authorization": f"Bearer {token}"},
-   #                        "settle": {"Authorization": f"Bearer {token}"}}))
-   #
-   # 2. Wire the verifier to it:
+   # 2. Wire the verifier to it (env, not code):
+   export CDP_API_KEY_ID='<apiKeyId from the CDP console>'
+   export CDP_API_KEY_SECRET='<base64 secret from the CDP console>'
    export X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
    export X402_FACILITATOR_HEADERS_COMMAND='["python3", "/srv/mint_cdp_jwt.py"]'
+
+   # 3. Pre-flight on the host before going live:
+   python3 /srv/mint_cdp_jwt.py --check     # mints + signature-verifies all
+                                            # three route tokens to stderr;
+                                            # exits nonzero on any problem
    ```
+
+   The script mints one route-bound JWT per facilitator route (POST /verify,
+   POST /settle, GET /supported) because the official x402 client calls
+   create_headers() without route context while CDP binds every token to a
+   single route via its uri claim — a /verify token cannot authenticate
+   /settle. Key material stays in platform secrets/env; stdout carries only
+   the grouped header JSON; failures exit nonzero with clean stdout (fail
+   closed). Note --check validates structure and signatures locally; it
+   cannot detect a well-formed-but-wrong key pair — that surfaces as a 401
+   on first use against CDP.
 
    CDP authenticates with a JWT minted per-request from the API key pair
    (`apiKeyId` / `apiKeySecret` from the CDP console). The verifier's
@@ -109,8 +158,8 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
    `X402_FACILITATOR_HEADERS_COMMAND=<JSON argv>` (per-request mint, e.g.
    CDP — see the wiring block above), and only if Halli opts in:
    `X402_AUTO_SETTLE=1`. Check `GET /health` reports the expected gate.
-4. Re-run the test suites (69 x402-focused tests in the mission repo:
-   endpoint 14 + verifier 27 + classifier 28; full tools suite is 387) and
+4. Re-run the test suites (70 x402-focused tests in the mission repo:
+   endpoint 14 + verifier 28 + classifier 28; full tools suite is 388) and
    one live $0.50 self-test call.
 5. Directory + Bazaar submission, Nostr announcement, and offer-page link
    updates — all worker-executable; see the next section.
@@ -118,6 +167,9 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 ## Post-deploy distribution: directory submission (pinned 2026-08-21T14:11Z)
 
 Two surfaces carry listings; both are worker-executable after deploy.
+**C.2 below (agent-tool registries, added 2026-08-21T22:4xZ) is now part of the
+same one-pass deploy sequence — see
+`research/2026-08-21-non-github-buyer-surface-map.md`.**
 
 **A. x402-list.com (explicit submission, verified live this date).**
 
@@ -165,12 +217,54 @@ if not, surface A covers it explicitly.
 (`outreach/posts/2026-08-21-x402-endpoint-machine-path.txt`) with the real
 origin, and swap the offer page's "pending hosting" line for the live URL.
 
+**C.2 Agent-tool registries (rotation-prep, measured 2026-08-21T22:4xZ).**
+The MCP-directory class is live and carries a dense x402 trust-tooling cluster
+(direct comparables: ontario-protocol useCount 982, TrustBench 1029). Same
+hosting dependency as A — no new Halli decision, same origin unlocks it:
+
+1. **Smithery** (primary): open `https://smithery.ai/new`, enter the public
+   HTTPS URL of the MCP wrapper, complete publishing (account flow = Halli
+   step, like hosting). Docs: `smithery.ai/docs/build/publish.md`
+   (LLM-friendly at `/docs/llms.txt`). Static server card fallback:
+   `/.well-known/mcp/server-card.json` if the scan can't auth.
+   Search API is public/no-auth (`registry.smithery.ai/servers?q=...`) —
+   use it to verify listing lands and to read `useCount` on 08-28.
+2. **Glama** (secondary): add-server flow at `glama.ai/mcp/servers/add`;
+   public search API `glama.ai/api/mcp/v1/servers?query=...` for verification.
+3. Skip mcp.so ($39 paid listing), PulseMCP (submissions paused), OpenTools
+   (/submit 404) — measured dead ends, do not re-probe blind.
+4. Product shape: wrap the existing demand-probe subcommands
+   (`fetch-bazaar/scan/validate/whois/never`) as read-only MCP tools —
+   deterministic, keyless, already 99-tests-green upstream logic.
+5. Measure on 08-28 together with payment-path touches: x402-list pickup,
+   Smithery `useCount`, Glama presence.
+
 ## Cost/price sanity
 
-- $0.50/call vs. the lane's $0.50–$5 target: entry price, volume-first.
+- Default $0.50/call stands until Halli acks otherwise. Worker recommendation
+  on record (2026-08-21 self-eval): launch at **$0.05** — peer median is
+  $0.01, Verification peers $0.01–$0.05; against the measured-empty market,
+  $0.05 measures demand for the diagnostic while $0.50 mostly measures price
+  friction. Reprice upward on first repeat payer.
 - Facilitator fees are set by the facilitator provider, not this service.
 - Kill criterion unchanged: zero payment-path touches beyond publication by
-  2026-08-28 kills the paid wrapper; the classifier stays.
+  deploy+7d kills the paid wrapper; the classifier stays.
+
+### Pricing-swap checklist (execute immediately on any pricing ack)
+
+The reprice itself is one constant; everything else is consistency. USDC
+amounts are 6-decimal smallest units: dollars × 1_000_000, so $0.50 →
+`"50000"` and $0.05 → `"5000"`. Then update every surface in one pass:
+
+1. `tools/x402_endpoint.py`: `PAYWALL_AMOUNT` (`50000`→`5000`) +
+   `PAYWALL_PRICE_HUMAN` (`"$0.50 USDC"`→`"$0.05 USDC"`) + module docstring.
+2. `tools/test_x402_endpoint.py` + any fixture asserting amount/price text.
+3. Runbook title + lines mentioning `$0.50` (self-test call line included).
+4. `deliverables/x402-bazaar-doctor-offer.md` machine-path line.
+5. Queued Nostr endpoint post (`outreach/posts/2026-08-21-x402-endpoint-machine-path.txt`)
+   — MUST land before rollover publication if the ack precedes it.
+6. The staged x402-list submission curl's `notes` field ("$0.50/call").
+7. Full tools suite green + py_compile before calling it done.
 
 ## Security notes
 
