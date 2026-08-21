@@ -7,13 +7,13 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
 
 ## What exists today (verified in-repo)
 
-- `tools/x402_endpoint.py` — Starlette app. `POST /diagnose` returns a
+- `x402_endpoint.py` — Starlette app. `POST /diagnose` returns a
   protocol-correct x402 V2 `PAYMENT-REQUIRED` 402 (exact scheme, CAIP-2
   `eip155:8453`, Circle USDC `0x8335…2913`, `payTo` = mission receive-only
   wallet, amount `50000` = $0.50), advertises itself via the Bazaar discovery
   extension, and **fails closed** without a wired verifier (paid retry →
   `501 payment_not_verified`, nothing charged).
-- `tools/x402_verifier.py` — **the real verifier, now implemented.** Delegates
+- `x402_verifier.py` — **the real verifier, now implemented.** Delegates
   EIP-3009 signature/balance/nonce checks to the official `x402` package's
   HTTP facilitator client. Env-activated:
   - `X402_FACILITATOR_URL` — set it → verify-only gate; unset → fail-closed.
@@ -23,7 +23,7 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
     transaction hash. Default is verify-only; auto-settle is an owner call.
   - `/health` reports the active gate (`fail-closed` / `verify_only via …` /
     `verify_and_settle via …`).
-- `tools/test_x402_endpoint.py` (14 tests) + `tools/test_x402_verifier.py`
+- `test_x402_endpoint.py` (14 tests) + `test_x402_verifier.py`
   (22 tests) — all passing; full tools suite 362/362.
 - Live smoke on 127.0.0.1:8787 with the verifier active against the real
   x402.org facilitator: `/health` 200 showing `verify_only via
@@ -51,6 +51,22 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
    the CDP (coinbase.com/developer-platform) project and generate the API key
    pair. The worker cannot accept the CDP terms. Alternative: any other
    Base-mainnet facilitator service; the verifier only needs a URL + headers.
+
+   Concrete CDP wiring (what "paste the keys" means once created):
+
+   ```
+   X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+   X402_FACILITATOR_HEADERS={"Authorization":"Bearer <access-token>"}
+   ```
+
+   CDP authenticates with a JWT minted per-request from the API key pair
+   (`apiKeyId` / `apiKeySecret` from the CDP console), so the header above is
+   generated at deploy time, not pasted as a static secret. If the platform
+   cannot run the JWT mint step, prefer a facilitator service that accepts a
+   static key header — the verifier treats headers as opaque JSON either way.
+   Confirm the target answers `GET /supported` with `exact` +
+   `eip155:8453` before wiring; the free `https://x402.org/facilitator`
+   fails this check (testnet-only for `exact`).
 3. **Domain (optional).** A stable HTTPS origin so the resource URL in the
    402 is durable; a `*.fly.dev` / `*.onrender.com` subdomain is fine to
    start.
@@ -58,12 +74,13 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 ## Worker-executable steps once hosting + facilitator exist
 
 1. Push the repo (already public) and point the platform at
-   `tools/x402_endpoint.py` (uvicorn entrypoint, `PORT` env respected).
+   `x402_endpoint.py` (uvicorn entrypoint, `PORT` env respected).
 2. Install deps: `pip install "x402[all]" starlette uvicorn`.
 3. Set env: `X402_FACILITATOR_URL=<facilitator base URL>`,
    `X402_FACILITATOR_HEADERS=<JSON auth headers>`, and only if Halli opts
    in: `X402_AUTO_SETTLE=1`. Check `GET /health` reports the expected gate.
-4. Re-run the test suites (362 tests) and one live $0.50 self-test call.
+4. Re-run the test suites (44 tests in this repo; the mission tools suite is
+   367) and one live $0.50 self-test call.
 5. Hand back to the worker: Bazaar/CDP submission of the resource URL, Nostr
    announcement, and offer-page link updates are all worker-executable and
    prepared in `outreach/posts/`.
