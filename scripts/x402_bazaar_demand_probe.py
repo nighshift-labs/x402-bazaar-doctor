@@ -16,6 +16,17 @@ not a broken instrument (2026-08-21).
 Usage:
   python3 scripts/x402_bazaar_demand_probe.py fetch-bazaar /tmp/bazaar_all.json
   python3 scripts/x402_bazaar_demand_probe.py scan /tmp/bazaar_all.json --hours 24 [--top-hosts 25]
+  python3 scripts/x402_bazaar_demand_probe.py whois /tmp/bazaar_all.json 0xADDR [0xADDR...]
+  python3 scripts/x402_bazaar_demand_probe.py never --hours 24 0xADDR [0xADDR...]
+
+2026-08-21 refinements from x402-foundation/x402#3226 review:
+- Facilitator-routed `exact` settlements still emit plain USDC Transfer(to=payTo)
+  logs (transferWithAuthorization: facilitator is tx sender, payer->payee stays in
+  the event), so getLogs-on-to sees them. The old general routing caveat applies
+  only to schemes settling off the USDC contract or batched into internal moves.
+- A zero-in-window reading and a never-received wallet are different claims;
+  explorer /counters endpoints can report zeros for addresses with known transfers.
+  The `never` command reads raw Transfer history instead of trusting summaries.
 """
 import argparse
 import json
@@ -129,32 +140,7 @@ def collect_paytos(bazaar, top_hosts=None):
 def scan(paytos, hours):
     L = latest_block()
     start = L - int(hours * 3600 / SECONDS_PER_BLOCK)
-    hits = defaultdict(int)
-    totals = defaultdict(float)
-    senders = defaultdict(set)
-    CHUNK = 10000       # base.org public RPC max getLogs window
-    GROUP = 400         # keep multi-address filters well under payload caps
-    lo = start
-    nchunks = 0
-    while lo <= L:
-        hi = min(lo + CHUNK - 1, L)
-        for gi in range(0, len(paytos), GROUP):
-            grp = paytos[gi:gi + GROUP]
-            try:
-                logs = getlogs({"address": grp, "topics": [TRANSFER_TOPIC],
-                                "fromBlock": hex(lo), "toBlock": hex(hi)})
-            except Exception as e:
-                print(f"WARN group@{lo}-{hi} idx{gi}: {e}", file=sys.stderr)
-                continue
-            for lg in logs:
-                to = "0x" + lg["topics"][2][-40:].lower()
-                hits[to] += 1
-                d = lg.get("data", "0x")
-                totals[to] += int(d, 16) / 1e6 if d not in ("0x", "") else 0
-                senders[to].add("0x" + lg["topics"][1][-40:].lower())
-        nchunks += 1
-        print(f"  chunk {nchunks} ({lo}-{hi})", flush=True)
-        lo = hi + 1
+    hits, totals, senders = _scan_window(paytos, start, L)
     result = {
         "measured_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "window_hours": hours,
@@ -181,6 +167,115 @@ def validate_instrument():
     return 0 if n > 0 else 1
 
 
+def whois(bazaar, wallets):
+    """Index-membership check: which of `wallets` appear as seller payTo rows?"""
+    want = {w.lower() for w in wallets}
+    rows_by_wallet = defaultdict(list)
+    for it in bazaar:
+        h = host_of(it.get("resource") or "")
+        for acc in it.get("accepts") or []:
+            p = acc.get("payTo")
+            if isinstance(p, str) and p.lower() in want:
+                rows_by_wallet[p.lower()].append({
+                    "resource": it.get("resource"),
+                    "host": h,
+                    "scheme": acc.get("scheme"),
+                })
+    return [{
+        "wallet": w,
+        "in_index": w in rows_by_wallet,
+        "rows": len(rows_by_wallet.get(w, [])),
+        "resources": [r["resource"] for r in rows_by_wallet.get(w, [])][:10],
+        "hosts": sorted({r["host"] for r in rows_by_wallet.get(w, []) if r["host"]}),
+    } for w in sorted(want)]
+
+
+def _scan_window(paytos, lo, hi):
+    """One windowed Transfer(to=payTo) sweep; returns per-wallet aggregates."""
+    hits = defaultdict(int)
+    totals = defaultdict(float)
+    senders = defaultdict(set)
+    CHUNK = 10000       # base.org public RPC max getLogs window
+    GROUP = 400         # keep multi-address filters well under payload caps
+    cur = lo
+    while cur <= hi:
+        top = min(cur + CHUNK - 1, hi)
+        for gi in range(0, len(paytos), GROUP):
+            grp = paytos[gi:gi + GROUP]
+            # Seller wallets are EOAs and emit no events: the event source MUST be
+            # the USDC contract, with recipients selected via Transfer topics[2].
+            # (2026-08-21 lesson: address=<seller wallets> returns empty for any
+            # market and fabricates a "zero demand" result.)
+            topics = [TRANSFER_TOPIC, None, ["0x" + "0" * 24 + a.lower().lstrip("0x").rjust(40, "0") for a in grp]]
+            try:
+                logs = getlogs({"address": USDC, "topics": topics,
+                                "fromBlock": hex(cur), "toBlock": hex(top)})
+            except Exception as e:
+                print(f"WARN group@{cur}-{top} idx{gi}: {e}", file=sys.stderr)
+                continue
+            for lg in logs:
+                to = "0x" + lg["topics"][2][-40:].lower()
+                hits[to] += 1
+                d = lg.get("data", "0x")
+                totals[to] += int(d, 16) / 1e6 if d not in ("0x", "") else 0
+                senders[to].add("0x" + lg["topics"][1][-40:].lower())
+        cur = top + 1
+    return hits, totals, senders
+
+
+def never_received(paytos, hours, history_days=None):
+    """Split zero-in-window from never-received by reading Transfer history.
+
+    A 24h zero is one measurement; a wallet that has NEVER received anything is a
+    stronger claim. Explorer /counters endpoints can report zeros for addresses
+    with known transfers (#3226, 2026-08-21), so this reads raw logs instead.
+    With history_days set, the history pass is bounded and an empty history is
+    reported as no_transfers_in_history_window — NOT as never_received.
+    """
+    L = latest_block()
+    start = L - int(hours * 3600 / SECONDS_PER_BLOCK)
+    if history_days is None:
+        hist_start, bounded = 0, False
+    else:
+        hist_start, bounded = L - int(history_days * 86400 / SECONDS_PER_BLOCK), True
+    win_hits, win_totals, win_senders = _scan_window(paytos, start, L)
+    hist_hits, hist_totals, hist_senders = _scan_window(paytos, hist_start, L)
+    per_address = {}
+    for w in paytos:
+        recent_n = win_hits.get(w, 0)
+        hist_n = hist_hits.get(w, 0)
+        if recent_n:
+            cls = "received_in_window"
+        elif hist_n:
+            cls = "zero_in_window"
+        else:
+            cls = "no_transfers_in_history_window" if bounded else "never_received"
+        per_address[w] = {
+            "window_payments": recent_n,
+            "window_usdc_in": round(win_totals.get(w, 0.0), 6),
+            "history_payments": hist_n,
+            "history_usdc_in": round(hist_totals.get(w, 0.0), 6),
+            "distinct_payers_all_time": len(hist_senders.get(w, set())),
+            "classification": cls,
+        }
+    result = {
+        "measured_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "window_hours": hours,
+        "block_window": [start, L],
+        "history_block_start": hist_start,
+        "history_bounded": bounded,
+        "addresses_scanned": len(paytos),
+        "zero_in_window": sum(1 for v in per_address.values()
+                              if v["classification"] == "zero_in_window"),
+        "never_received": sum(1 for v in per_address.values()
+                              if v["classification"] == "never_received"),
+        "per_address": per_address,
+    }
+    summary = {k: v for k, v in result.items() if k != "per_address"}
+    print(json.dumps(summary, indent=1))
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -192,12 +287,35 @@ def main():
     s.add_argument("--top-hosts", type=int, default=None)
     s.add_argument("--out", default=None)
     v = sub.add_parser("validate")
+    w = sub.add_parser("whois")
+    w.add_argument("bazaar_json")
+    w.add_argument("wallets", nargs="+")
+    n = sub.add_parser("never")
+    n.add_argument("--hours", type=float, default=24)
+    n.add_argument("--history-days", type=float, default=None,
+                   help="bound the history pass; empty history is then reported "
+                        "as no_transfers_in_history_window, not never_received")
+    n.add_argument("--out", default=None)
+    n.add_argument("wallets", nargs="+")
     args = ap.parse_args()
 
     if args.cmd == "fetch-bazaar":
         return fetch_bazaar(args.out)
     if args.cmd == "validate":
         return validate_instrument()
+    if args.cmd == "whois":
+        bazaar = json.load(open(args.bazaar_json))
+        rows = whois(bazaar, args.wallets)
+        print(json.dumps(rows, indent=1))
+        return 0
+    if args.cmd == "never":
+        wallets = [w.lower() for w in args.wallets]
+        print(f"classifying {len(wallets)} wallets: {args.hours}h window vs history...")
+        result = never_received(wallets, args.hours, history_days=args.history_days)
+        if args.out:
+            json.dump(result, open(args.out, "w"), indent=1)
+            print(f"wrote {args.out}")
+        return 0
 
     bazaar = json.load(open(args.bazaar_json))
     paytos, _hosts = collect_paytos(bazaar, top_hosts=args.top_hosts)
