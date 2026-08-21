@@ -12,6 +12,10 @@ Encodes the discriminators confirmed in x402-foundation/x402#3045:
   default missing keys to ``{}`` erase the distinction).
 - ``rejected`` / ``processing`` / ``success`` statuses isolate validator-ingest,
   queue/indexing-delay, and post-acceptance storage respectively.
+- A resource that answers ``200`` to an *unpaid* request is never catalogued,
+  no matter how many settlements succeed (the #2993 resolution, re-derived by
+  the #3045 method census). This seller-side cause outranks storage/indexing
+  theories when ``unpaid_request_status`` is captured as 200.
 
 Read-only: no chain queries, no signing, no network calls.
 """
@@ -45,6 +49,12 @@ _ACTIONS = {
     "success_but_not_indexed": [
         "Focus on post-acceptance storage/indexing or discovery filtering; settlement and ingest both succeeded.",
         "Query discovery with the exact resource URL used in the paid request before concluding.",
+        "Before deeper debugging: confirm the resource answers 402 (not 200) to an unpaid request — a 200-on-unpaid resource is never catalogued (#2993).",
+    ],
+    "unpaid_200_never_catalogued": [
+        "Make the resource answer 402 PAYMENT-REQUIRED to unpaid requests; a resource that serves 200 without payment is never catalogued, regardless of successful settlements.",
+        "After fixing the unpaid response, re-send one controlled paid request and re-check discovery by exact resource URL.",
+        "Do not debug storage/indexing first: this seller-side cause explains settled-but-absent resources on its own.",
     ],
     "indexed_ok": [],
     "verify_discovery": [
@@ -74,6 +84,12 @@ def diagnose(observation):
         diagnosis, confidence = "v1_envelope_extension_ignored", CONFIRMED
     elif not response_present:
         diagnosis, confidence = "bazaar_response_absent", SPEC_DERIVED
+    elif (
+        status == "success"
+        and observation.get("discovery_row_present") is False
+        and observation.get("unpaid_request_status") == 200
+    ):
+        diagnosis, confidence = "unpaid_200_never_catalogued", CONFIRMED
     elif status == "rejected":
         diagnosis, confidence = "catalog_rejected", SPEC_DERIVED
     elif status == "processing":
@@ -103,6 +119,7 @@ def diagnose(observation):
             "settle_response_bazaar_present": response_present,
             "bazaar_status": status,
             "discovery_row_present": observation.get("discovery_row_present"),
+            "unpaid_request_status": observation.get("unpaid_request_status"),
         },
         "scope_note": (
             "Static classification of one captured observation. No chain query, "

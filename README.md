@@ -7,6 +7,9 @@ redacted observation — offline, no network calls, no chain queries.
 The v1-envelope root cause and the absent-vs-empty response distinction were
 publicly confirmed in
 [x402-foundation/x402#3045](https://github.com/x402-foundation/x402/issues/3045).
+The unpaid-200 rule below is the resolution of
+[#2993](https://github.com/x402-foundation/x402/issues/2993), re-derived by
+the #3045 method census.
 
 ## Why
 
@@ -19,7 +22,10 @@ real, documented x402 operator failure. The discriminators are subtle:
   outcome (`e30=` base64 decodes to `{}`) — parsers that default missing keys
   erase the distinction;
 - `rejected` / `processing` / `success` statuses isolate validator-ingest,
-  queue-delay, and post-acceptance indexing respectively.
+  queue-delay, and post-acceptance indexing respectively;
+- **a resource that answers `200` to an unpaid request is never catalogued,
+  no matter how many payments settle** — the most common seller-side cause,
+  and the first thing to check before blaming storage or indexing.
 
 ## Diagnoses
 
@@ -29,7 +35,8 @@ real, documented x402 operator failure. The discriminators are subtle:
 | `bazaar_response_absent` | extension not processed at all; capture raw response before changing route metadata |
 | `catalog_rejected` | ingest rejected the extension; inspect `rejectedReason` against the schema |
 | `catalog_processing` | asynchronous indexing still running; poll by exact resource URL + settlement time |
-| `success_but_not_indexed` | settlement and ingest OK; fault is in storage/indexing/discovery filtering |
+| `unpaid_200_never_catalogued` | settlement AND ingest succeeded, but the resource serves `200` without payment — make it answer `402`; it will never be catalogued otherwise |
+| `success_but_not_indexed` | settlement and ingest OK, unpaid behavior correct; fault isolates to storage/indexing/discovery filtering |
 | `indexed_ok` / `verify_discovery` | healthy, or your discovery poll was too short |
 
 ## Usage
@@ -42,7 +49,9 @@ Observation fields: `payment_scheme_version` (1|2),
 `extensions_bazaar_key_present` (bool), `settle_response_bazaar_present`
 (bool), `bazaar_status` (`success|processing|rejected|null`),
 `discovery_row_present` (bool/null after a ≥10-minute poll), optional
-`rejected_reason`, `resource_url`.
+`rejected_reason`, `resource_url`, and `unpaid_request_status` (HTTP status
+the resource returns to a request carrying no payment — capture this before
+debugging anything else).
 
 Redact signatures, keys, and credentials before sharing observations anywhere.
 
@@ -54,11 +63,15 @@ The same classifier runs as an x402 V2-payable HTTP resource:
   `PAYMENT-REQUIRED` header (exact scheme, `eip155:8453`, USDC `0x8335…2913`);
   paid retries carry `PAYMENT-SIGNATURE` and return the classified report plus
   a `PAYMENT-RESPONSE` settlement header.
-- `GET /sample` — free trial observation. `GET /health` — free.
+- Payment verification delegates to the official `x402` package's facilitator
+  client (`x402_verifier.py`; env-gated via `X402_FACILITATOR_URL`, optional
+  auth headers, owner-controlled auto-settle). Unconfigured, the service fails
+  closed: an unverified request is never charged and never served.
+- `GET /sample` — free trial observation. `GET /health` — free; reports the
+  active verification gate.
 
-Code is live in this repo (`x402_endpoint.py`, `test_x402_endpoint.py`,
-14 tests). **Public deployment is pending hosting acceptance** — the service
-fails closed until then; see [deploy/x402-endpoint-runbook.md](deploy/x402-endpoint-runbook.md).
+**Public deployment is pending hosting acceptance** — see
+[deploy/x402-endpoint-runbook.md](deploy/x402-endpoint-runbook.md).
 Until a public origin is announced here, use the CLI above or open an issue
 for the fixed-scope 25-USDC report offer.
 
