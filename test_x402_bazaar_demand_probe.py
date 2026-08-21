@@ -167,6 +167,110 @@ class WhoisTests(unittest.TestCase):
         self.assertEqual(rows[0]["rows"], 0)
 
 
+class PayerRegistryTests(unittest.TestCase):
+    """Payer provenance registry (#3226 round 4): recognizing a known platform
+    payout wallet turns 'wallet totals cannot attribute inflows' into a
+    mechanical label instead of a silent false positive."""
+
+    def _registry_path(self):
+        here = _HERE.parent
+        for cand in (here / "fixtures" / "platform_payout_wallets.json",
+                     here.parent / "fixtures" / "platform_payout_wallets.json"):
+            if cand.exists():
+                return cand
+        self.fail("registry fixture not found next to tests or under fixtures/")
+
+    def test_load_registry_normalizes_addresses(self):
+        reg = probe.load_payer_registry(self._registry_path())
+        self.assertIn("0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7", reg)
+        self.assertIn("0x26572ff23c6c52bfb1a69cb0c9114a8be443b422", reg)
+        self.assertEqual(reg["0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7"]["platform"],
+                         "Taskmarket")
+
+    def test_load_registry_rejects_entry_without_provenance(self):
+        import tempfile
+        bad = {"wallets": [{"address": "0x" + "9" * 40, "platform": "X"}]}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(bad, f)
+            path = f.name
+        with self.assertRaises(ValueError):
+            probe.load_payer_registry(path)
+
+    def test_label_payer_recognizes_known_wallet(self):
+        reg = probe.load_payer_registry(self._registry_path())
+        labeled = probe.label_payers(reg, ["0xDDC6CC3E4D11C1F3527B867C7DAD4ED9869C33F7"])
+        self.assertEqual(labeled["0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7"],
+                         {"platform": "Taskmarket", "provenance": "tx_hash_confirmed"})
+
+    def test_label_payer_returns_none_for_unknown_wallet(self):
+        reg = probe.load_payer_registry(self._registry_path())
+        labeled = probe.label_payers(reg, [PAYER_1])
+        self.assertIsNone(labeled[PAYER_1])
+
+    def test_scan_labels_known_payer_in_per_address(self):
+        # PAYTO_A is paid by the REAL Taskmarket payout wallet (registry hit)
+        # and by an unknown wallet (no label) in the same window.
+        TM = "0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7"
+        fake = FakeRpc([
+            _log(PAYTO_A, TM, 92500),
+            _log(PAYTO_A, PAYER_2, 1000),
+        ])
+        with patch.object(probe, "rpc_post", fake):
+            result = probe.scan([PAYTO_A], hours=1)
+        pa = result["per_address"][PAYTO_A]
+        self.assertEqual(pa["payers"], [
+            {"payer": PAYER_2, "platform": None, "provenance": None},
+            {"payer": TM, "platform": "Taskmarket", "provenance": "tx_hash_confirmed"},
+        ])
+
+    def test_scan_without_registry_keeps_payers_unlabeled(self):
+        fake = FakeRpc([_log(PAYTO_A, PAYER_1, 1000)])
+        with patch.object(probe, "rpc_post", fake):
+            result = probe.scan([PAYTO_A], hours=1, registry_path=None)
+        self.assertEqual(result["per_address"][PAYTO_A]["payers"],
+                         [{"payer": PAYER_1, "platform": None, "provenance": None}])
+
+    def test_never_labels_known_payer_and_unknown_stays_null(self):
+        TM = "0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7"
+        fake = FakeRpc([_log(PAYTO_A, TM, 92500)])
+        with patch.object(probe, "rpc_post", fake):
+            result = probe.never_received([PAYTO_A], hours=24)
+        payers = result["per_address"][PAYTO_A]["payers"]
+        self.assertEqual(payers,
+                         [{"payer": TM, "platform": "Taskmarket",
+                           "provenance": "tx_hash_confirmed"}])
+        # A wallet with no transfers never reaches a payers list at all.
+        fake2 = ParamRpc(lambda p: [])
+        with patch.object(probe, "rpc_post", fake2):
+            result2 = probe.never_received([PAYER_1], hours=24)
+        self.assertEqual(result2["per_address"][PAYER_1]["payers"], [])
+
+    def test_never_self_labels_scanned_platform_payout_wallet(self):
+        # The Taskmarket payout wallet ITSELF is scanned: its own inflows are
+        # platform funding, and the entry must carry that label regardless of
+        # who paid it.
+        TM = "0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7"
+        fake = FakeRpc([_log(TM, PAYER_1, 500_000_000)])
+        with patch.object(probe, "rpc_post", fake):
+            result = probe.never_received([TM], hours=24)
+        entry = result["per_address"][TM]
+        self.assertEqual(entry["wallet_label"]["platform"], "Taskmarket")
+        self.assertEqual(entry["wallet_label"]["provenance"], "tx_hash_confirmed")
+        self.assertEqual(entry["wallet_label"]["source"], "registry_self")
+        # ...and scan() must do the same.
+        fake2 = FakeRpc([_log(TM, PAYER_1, 500_000_000)])
+        with patch.object(probe, "rpc_post", fake2):
+            result2 = probe.scan([TM], hours=1)
+        self.assertEqual(result2["per_address"][TM]["wallet_label"]["platform"],
+                         "Taskmarket")
+
+    def test_unlabeled_wallet_has_no_wallet_label_key_content(self):
+        fake = FakeRpc([_log(PAYTO_A, PAYER_1, 1000)])
+        with patch.object(probe, "rpc_post", fake):
+            result = probe.scan([PAYTO_A], hours=1)
+        self.assertEqual(result["per_address"][PAYTO_A].get("wallet_label", {}), {})
+
+
 class NeverReceivedTests(unittest.TestCase):
     """never: zero-in-window vs never-received are different claims (2026-08-21
     #3226 lesson: explorer /counters endpoints can manufacture zeros)."""
