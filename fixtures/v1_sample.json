@@ -1,0 +1,9 @@
+{
+  "payment_scheme_version": 1,
+  "extensions_bazaar_key_present": false,
+  "settle_response_bazaar_present": false,
+  "bazaar_status": null,
+  "discovery_row_present": false,
+  "resource_url": "https://example-agent.example/paid-report",
+  "note": "synthetic fixture shaped like x402#3045; no live data"
+}
