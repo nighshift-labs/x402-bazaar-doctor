@@ -17,14 +17,20 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
   EIP-3009 signature/balance/nonce checks to the official `x402` package's
   HTTP facilitator client. Env-activated:
   - `X402_FACILITATOR_URL` — set it → verify-only gate; unset → fail-closed.
-  - `X402_FACILITATOR_HEADERS` — optional JSON object with extra auth headers
-    (e.g. CDP API key pairs).
+  - `X402_FACILITATOR_HEADERS` — optional JSON object of STATIC auth headers
+    (facilitators with a long-lived key only).
+  - `X402_FACILITATOR_HEADERS_COMMAND` — JSON argv array run ONCE PER
+    REQUEST; stdout parsed as grouped auth-header JSON
+    (`{"verify": {...}, "settle": {...}}`). This is the seam for facilitators
+    whose auth is minted fresh per call (CDP JWTs). A command that fails at
+    startup aborts the boot — fail closed, never unauthenticated.
   - `X402_AUTO_SETTLE=1` — also settle after verification and record the
     transaction hash. Default is verify-only; auto-settle is an owner call.
   - `/health` reports the active gate (`fail-closed` / `verify_only via …` /
     `verify_and_settle via …`).
 - `tools/test_x402_endpoint.py` (14 tests) + `tools/test_x402_verifier.py`
-  (22 tests) — all passing; full tools suite 362/362.
+  (27 tests) — all passing; full tools suite 387/387 (verified with the
+  official `x402==2.20.0` package installed AND without it).
 - Live smoke on 127.0.0.1:8787 with the verifier active against the real
   x402.org facilitator: `/health` 200 showing `verify_only via
   https://x402.org/facilitator`; unpaid `/diagnose` → 402; paid retry with a
@@ -54,17 +60,32 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 
    Concrete CDP wiring (what "paste the keys" means once created):
 
-   ```
-   X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
-   X402_FACILITATOR_HEADERS={"Authorization":"Bearer <access-token>"}
+   ```bash
+   # 1. Drop a mint script on the host. It reads the CDP key pair from
+   #    platform secrets and prints the grouped auth-header JSON the
+   #    verifier expects, fresh per request:
+   #
+   #    mint_cdp_jwt.py (sketch):
+   #      import json
+   #      from cdp.auth import jwt  # or any CDP JWT implementation
+   #      token = jwt.build_jwt(...)  # from key material in platform secrets
+   #      print(json.dumps({"verify": {"Authorization": f"Bearer {token}"},
+   #                        "settle": {"Authorization": f"Bearer {token}"}}))
+   #
+   # 2. Wire the verifier to it:
+   export X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
+   export X402_FACILITATOR_HEADERS_COMMAND='["python3", "/srv/mint_cdp_jwt.py"]'
    ```
 
    CDP authenticates with a JWT minted per-request from the API key pair
-   (`apiKeyId` / `apiKeySecret` from the CDP console), so the header above is
-   generated at deploy time, not pasted as a static secret. If the platform
-   cannot run the JWT mint step, prefer a facilitator service that accepts a
-   static key header — the verifier treats headers as opaque JSON either way.
-   Confirm the target answers `GET /supported` with `exact` +
+   (`apiKeyId` / `apiKeySecret` from the CDP console). The verifier's
+   `HEADERS_COMMAND` seam exists exactly for this: it shells out per request,
+   so tokens never go stale and key material stays inside the mint script /
+   platform secrets — the verifier only consumes its stdout. Static
+   `X402_FACILITATOR_HEADERS` will NOT work for CDP (a stale JWT means 401
+   on the first paid call). If a facilitator service accepts a static key
+   header instead, prefer it — fewer moving parts. Either way, confirm the
+   target answers `GET /supported` with `exact` +
    `eip155:8453` before wiring; the free `https://x402.org/facilitator`
    fails this check (testnet-only for `exact`).
 3. **Domain (optional).** A stable HTTPS origin so the resource URL in the
@@ -83,11 +104,14 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 1. Push the repo (already public) and point the platform at
    `tools/x402_endpoint.py` (uvicorn entrypoint, `PORT` env respected).
 2. Install deps: `pip install "x402[all]" starlette uvicorn`.
-3. Set env: `X402_FACILITATOR_URL=<facilitator base URL>`,
-   `X402_FACILITATOR_HEADERS=<JSON auth headers>`, and only if Halli opts
-   in: `X402_AUTO_SETTLE=1`. Check `GET /health` reports the expected gate.
-4. Re-run the test suites (44 tests in this repo; the mission tools suite is
-   367) and one live $0.50 self-test call.
+3. Set env: `X402_FACILITATOR_URL=<facilitator base URL>`, then either
+   `X402_FACILITATOR_HEADERS=<static JSON>` (static-key facilitators) or
+   `X402_FACILITATOR_HEADERS_COMMAND=<JSON argv>` (per-request mint, e.g.
+   CDP — see the wiring block above), and only if Halli opts in:
+   `X402_AUTO_SETTLE=1`. Check `GET /health` reports the expected gate.
+4. Re-run the test suites (69 x402-focused tests in the mission repo:
+   endpoint 14 + verifier 27 + classifier 28; full tools suite is 387) and
+   one live $0.50 self-test call.
 5. Directory + Bazaar submission, Nostr announcement, and offer-page link
    updates — all worker-executable; see the next section.
 
@@ -153,8 +177,9 @@ origin, and swap the offer page's "pending hosting" line for the live URL.
 - The service is stateless and read-only: it never queries chains, never
   signs, never holds keys. Verification and settlement are performed by the
   configured facilitator; receiving is via the mission's receive-only wallet.
-- `X402_FACILITATOR_HEADERS` may contain API-key material: set it as a
-  platform secret, never in code or git. This repo stays secret-free; the
+- `X402_FACILITATOR_HEADERS` may contain API-key material and
+  `X402_FACILITATOR_HEADERS_COMMAND` embeds a command line: set both as
+  platform secrets, never in code or git. This repo stays secret-free; the
   wallet address is public chain data.
 - The only mutable state is the injected verifier; deployments should keep
   the app process unprivileged.
