@@ -7,13 +7,13 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
 
 ## What exists today (verified in-repo)
 
-- `x402_endpoint.py` — Starlette app. `POST /diagnose` returns a
+- `tools/x402_endpoint.py` — Starlette app. `POST /diagnose` returns a
   protocol-correct x402 V2 `PAYMENT-REQUIRED` 402 (exact scheme, CAIP-2
   `eip155:8453`, Circle USDC `0x8335…2913`, `payTo` = mission receive-only
   wallet, amount `50000` = $0.50), advertises itself via the Bazaar discovery
   extension, and **fails closed** without a wired verifier (paid retry →
   `501 payment_not_verified`, nothing charged).
-- `x402_verifier.py` — **the real verifier, now implemented.** Delegates
+- `tools/x402_verifier.py` — **the real verifier, now implemented.** Delegates
   EIP-3009 signature/balance/nonce checks to the official `x402` package's
   HTTP facilitator client. Env-activated:
   - `X402_FACILITATOR_URL` — set it → verify-only gate; unset → fail-closed.
@@ -23,7 +23,7 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
     transaction hash. Default is verify-only; auto-settle is an owner call.
   - `/health` reports the active gate (`fail-closed` / `verify_only via …` /
     `verify_and_settle via …`).
-- `test_x402_endpoint.py` (14 tests) + `test_x402_verifier.py`
+- `tools/test_x402_endpoint.py` (14 tests) + `tools/test_x402_verifier.py`
   (22 tests) — all passing; full tools suite 362/362.
 - Live smoke on 127.0.0.1:8787 with the verifier active against the real
   x402.org facilitator: `/health` 200 showing `verify_only via
@@ -70,20 +70,76 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 3. **Domain (optional).** A stable HTTPS origin so the resource URL in the
    402 is durable; a `*.fly.dev` / `*.onrender.com` subdomain is fine to
    start.
+4. **Submitter contact email (one decision, needed before directory
+   submission).** The x402-list.com submission API requires a contact email.
+   Preferred: a dedicated project address on a domain/mailbox Halli controls
+   (e.g. an address on the domain that ends up hosting the endpoint). If none
+   exists and none will be created, say so and the worker submits with the
+   project identity string in `notes` only after Halli names an address —
+   the worker cannot create mailboxes or use a personal identity.
 
 ## Worker-executable steps once hosting + facilitator exist
 
 1. Push the repo (already public) and point the platform at
-   `x402_endpoint.py` (uvicorn entrypoint, `PORT` env respected).
+   `tools/x402_endpoint.py` (uvicorn entrypoint, `PORT` env respected).
 2. Install deps: `pip install "x402[all]" starlette uvicorn`.
 3. Set env: `X402_FACILITATOR_URL=<facilitator base URL>`,
    `X402_FACILITATOR_HEADERS=<JSON auth headers>`, and only if Halli opts
    in: `X402_AUTO_SETTLE=1`. Check `GET /health` reports the expected gate.
 4. Re-run the test suites (44 tests in this repo; the mission tools suite is
    367) and one live $0.50 self-test call.
-5. Hand back to the worker: Bazaar/CDP submission of the resource URL, Nostr
-   announcement, and offer-page link updates are all worker-executable and
-   prepared in `outreach/posts/`.
+5. Directory + Bazaar submission, Nostr announcement, and offer-page link
+   updates — all worker-executable; see the next section.
+
+## Post-deploy distribution: directory submission (pinned 2026-08-21T14:11Z)
+
+Two surfaces carry listings; both are worker-executable after deploy.
+
+**A. x402-list.com (explicit submission, verified live this date).**
+
+- Auto-probes each listed endpoint path for HTTP 402, then manual review.
+- Pricing rules (from /submit and /llms.txt, read live): free from the
+  mission's own domain; **$1 one-off x402-payment if the service URL is on a
+  free compute host** (vercel.app, workers.dev, fly.dev "and similar") — buys
+  queue placement, never a listing, never refunded; $0.50 anti-spam fee if
+  resubmitting within 14 days of a rejection; static hosts (github.io) and
+  dev tunnels (ngrok, trycloudflare) rejected at any price. The outgoing $1
+  is **not worker-executable** (receive-only posture) — one more reason the
+  hosted origin should be the mission's own domain or paid hosting.
+- Exact call (fill origin + email from Halli's decisions above):
+
+  ```bash
+  curl -X POST https://x402-list.com/api/v1/submit \
+    -H 'Content-Type: application/json' -d @- <<'EOF'
+  {
+    "url": "<ORIGIN>",
+    "email": "<HALLI-CHOSEN PROJECT EMAIL>",
+    "service_name": "x402 Bazaar Doctor",
+    "description": "Diagnostics endpoint: why a settled x402 payment has no Bazaar discovery row. Deterministic offline classifier; returns diagnosis + recommended actions.",
+    "website_url": "https://github.com/nighshift-labs/x402-bazaar-doctor",
+    "category": "Verification",
+    "endpoints": ["/diagnose"],
+    "notes": "AI-operated project identity nighshift-labs. Free self-serve classifier at the repo; this endpoint is the $0.50/call machine path."
+  }
+  EOF
+  ```
+
+- Valid categories (live `/api/v1/categories`, 2026-08-21): AI, Blockchain,
+  Compute, Content, Data, Finance, Verification, Other. Schema:
+  `POST /api/v1/submit` (`ServiceSubmissionRequest`; required: url, email,
+  service_name, description, website_url, category, endpoints).
+
+**B. x402 Bazaar (passive but verify it).** x402-list auto-imports Bazaar rows
+(`imported:bazaar` provenance), and our own 49-operator census shows catalogued
+rows answer **402 unpaid** with the declared verb — which `/diagnose` does by
+construction (verified protocol-correct 402 in live smoke). After the first
+real settlement, poll discovery by exact resource URL for ≥10 minutes
+(classifier rule), then check whether x402-list has picked the service up;
+if not, surface A covers it explicitly.
+
+**C. Then:** publish the prepared Nostr endpoint post
+(`outreach/posts/2026-08-21-x402-endpoint-machine-path.txt`) with the real
+origin, and swap the offer page's "pending hosting" line for the live URL.
 
 ## Cost/price sanity
 
