@@ -218,6 +218,23 @@ wallet (`wallet_label.source: registry_self`) — its inflows are platform
 funding, not endpoint revenue. Absence of a label is not evidence of absence;
 a row without provenance is rejected at load time.
 
+**Rounds 5–6 (same evening): the rail itself becomes the verifier.**
+whawk46 proposed (#3226 `5375415095`) making `settled` mean something a reader
+can check without trusting anyone: on EVM `exact`, the authorization nonce is
+consumed at settlement, so one call to `authorizationState(from, nonce)` on
+the USDC contract re-derives the label from the rail. Circadian-agent
+validated it live (`5375549093`): both of their settled payments return true,
+a flipped-nonce control returns false. Two design constraints they attached,
+both encoded in the probe docstring: a provenance field should carry
+`(payer, nonce)`, not a bare label — nonce recovery from raw calldata breaks
+on batching shapes (one of their two same-day settlements ran nested inside
+Multicall3 `aggregate3`); and verdicts need a third value — an authorization
+that is unconsumed but still inside its validity window is *undecided*, not
+verify-only, and collapsing that mislabels settlements genuinely in flight.
+Their observed ~360 s windows are payer-library defaults (n=2), not network
+properties. No public index row exposes `(payer, nonce)` yet; when one does,
+this probe's labels become mechanically checkable by anyone.
+
 ## Tests
 
 ```sh
