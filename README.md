@@ -11,9 +11,9 @@ publicly confirmed in
 The unpaid-200 rule below is the resolution of
 [#2993](https://github.com/x402-foundation/x402/issues/2993), re-derived by
 the #3045 method census. The unpaid-400 rule is field-observed from the
-#3045 catalogued-side census (49 operators, one per netloc: one `400`,
-zero `200`s, zero `405`s once the declared verb is used) and **calibrated**
-against that census' per-row delivery, committed at
+#3045 catalogued-side census (49 netlocs / 42 `payTo` operator clusters:
+one `400`, zero `200`s, zero `405`s once the declared verb is used) and
+**calibrated** against that census' per-row delivery, committed at
 [fixtures/x402_census_rows_2026-08-21.json](fixtures/x402_census_rows_2026-08-21.json)
 with the publisher's explicit in-thread authorization.
 
@@ -24,10 +24,16 @@ The classifier is not just consistent with the census — it reproduces it.
 (`resource`, `declared_verb`, `unpaid_status`, `error`), and the test suite
 asserts the exact published distribution: **49 rows / 49 distinct hosts,
 conclusive 48 → `402`: 47, `400`: 1, `200`: 0, timeout: 1** (verbs:
-27 `GET` / 22 `POST`). It encodes the census' own collection discipline:
+27 `GET` / 22 `POST`). Independence is computed over **`payTo` clusters, never hostnames** —
+the publisher's own correction after their netloc-keyed tool over-counted
+operators (one operator can wear several hostnames; a registrable-domain
+collapse under-counts because shared PaaS hosting is not a shared
+operator). The reducer's discipline:
 
-- one row per netloc — a duplicate host raises, because an operator with
-  many routes must not dominate the distribution;
+- an optional per-row `payto` label defines the cluster; a row without one
+  is its own cluster — there is no invisible hostname fallback;
+- route-level input (several rows per netloc) is accepted by design — a
+  duplicate host is display data, not an error;
 - templated paths raise — probing a placeholder invents a parameter, and a
   `404`/`400` from a made-up value is indistinguishable from a real
   ordering signal;
@@ -35,10 +41,16 @@ conclusive 48 → `402`: 47, `400`: 1, `200`: 0, timeout: 1** (verbs:
   dropped from the denominator;
 - zero catalogued `200`-to-unpaid rows is recorded as a **bound**, not proof
   of absence;
-- the unpaid-400 finding reports its rule status honestly: one independent
-  instance is `single_instance` (field-observed); a second instance from a
-  different operator flips it to `multi_instance` — the upgrade path the
-  census publisher asked for.
+- the unpaid-400 finding reports its rule status honestly: instances on one
+  `payTo` cluster are `single_instance` (field-observed); a second distinct
+  cluster flips it to `multi_instance`. Two hostnames of ONE operator both
+  answering `400` must not upgrade a note into a rule.
+
+The publisher's clustering of our committed 49 rows is committed as
+[fixtures/x402_census_payto_clusters_2026-08-21.json](fixtures/x402_census_payto_clusters_2026-08-21.json)
+(four multi-hostname groups, truncated payTo labels as published), and the
+test suite asserts their exact numbers: **49 netlocs / 42 `payTo`
+clusters**, netloc over-counting independence by 7.
 
 ```sh
 python3 x402_bazaar_doctor.py --census fixtures/x402_census_rows_2026-08-21.json
