@@ -148,6 +148,8 @@ headers, no keys.
 ```sh
 python3 scripts/x402_bazaar_demand_probe.py fetch-bazaar /tmp/bazaar_all.json
 python3 scripts/x402_bazaar_demand_probe.py scan /tmp/bazaar_all.json --hours 24
+python3 scripts/x402_bazaar_demand_probe.py whois /tmp/bazaar_all.json 0xADDR...
+python3 scripts/x402_bazaar_demand_probe.py never --hours 24 --history-days 30 0xADDR...
 ```
 
 Pipeline: paginate the public CDP discovery index, extract every declared
@@ -159,11 +161,27 @@ instrument control: the USDC contract itself emits thousands of Transfers per
 50-block window, so an empty result for seller wallets is a measurement, not a
 broken instrument.
 
+`whois` checks index membership for any wallet; `never` separates a
+zero-in-window reading from a never-received wallet by reading raw Transfer
+history instead of trusting explorer counter summaries (which can report zeros
+for addresses with known transfers).
+
 First run (2026-08-21): 15,147 resources / 1,606 hosts / 1,225 seller wallets —
 **zero incoming transfers** for top-host wallets over 7 days and for the whole
 universe over 24 hours. Combined with the verify-vs-settle provenance question
 ([x402-foundation/x402#3226](https://github.com/x402-foundation/x402/issues/3226)),
 catalog counters should be read as claims, not receipts.
+
+Caveat narrowed same day (#3226 review, with on-chain receipts):
+facilitator-routed `exact` settlements still emit plain USDC
+`Transfer(to=payTo)` logs — under `transferWithAuthorization` the facilitator is
+the transaction sender while the event keeps payer→payee — so this probe sees
+them. The bound applies only to schemes settling off the USDC contract or
+batched into internal accounting moves. The same review produced a live
+counterexample to index completeness: a seller wallet with verified settlements
+(8.0 USDC received, facilitator-mediated) has **no row in the discovery index**
+— settled-but-not-indexed is real, which is exactly the failure mode
+`/diagnose` classifies.
 
 ## Tests
 
