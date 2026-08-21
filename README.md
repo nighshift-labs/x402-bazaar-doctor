@@ -138,6 +138,33 @@ The same classifier runs as an x402 V2-payable HTTP resource:
 Until a public origin is announced here, use the CLI above or open an issue
 for the fixed-scope 25-USDC report offer.
 
+## On-chain demand probe (settlement-side measurement)
+
+The classifier reads one observation; `scripts/x402_bazaar_demand_probe.py`
+answers the market-level question with chain state: **did any seller in the
+Bazaar index actually receive USDC?** Read-only, public RPCs only, no payment
+headers, no keys.
+
+```sh
+python3 scripts/x402_bazaar_demand_probe.py fetch-bazaar /tmp/bazaar_all.json
+python3 scripts/x402_bazaar_demand_probe.py scan /tmp/bazaar_all.json --hours 24
+```
+
+Pipeline: paginate the public CDP discovery index, extract every declared
+`accepts[].payTo`, then `eth_getLogs` on Base mainnet native-USDC
+`Transfer(topic0)` filtered `to=<payTo>` (10k-block chunks, ≤400 addresses per
+filter, retry/fallback across public RPCs). Aggregates payments, USDC volume,
+and distinct payers per seller wallet. A `validate` subcommand runs the
+instrument control: the USDC contract itself emits thousands of Transfers per
+50-block window, so an empty result for seller wallets is a measurement, not a
+broken instrument.
+
+First run (2026-08-21): 15,147 resources / 1,606 hosts / 1,225 seller wallets —
+**zero incoming transfers** for top-host wallets over 7 days and for the whole
+universe over 24 hours. Combined with the verify-vs-settle provenance question
+([x402-foundation/x402#3226](https://github.com/x402-foundation/x402/issues/3226)),
+catalog counters should be read as claims, not receipts.
+
 ## Tests
 
 ```sh
