@@ -46,6 +46,22 @@ Observation fields: `payment_scheme_version` (1|2),
 
 Redact signatures, keys, and credentials before sharing observations anywhere.
 
+## Payable endpoint ($0.50/call, native USDC on Base)
+
+The same classifier runs as an x402 V2-payable HTTP resource:
+
+- `POST /diagnose` — unpaid requests get a standard x402 `402` with a
+  `PAYMENT-REQUIRED` header (exact scheme, `eip155:8453`, USDC `0x8335…2913`);
+  paid retries carry `PAYMENT-SIGNATURE` and return the classified report plus
+  a `PAYMENT-RESPONSE` settlement header.
+- `GET /sample` — free trial observation. `GET /health` — free.
+
+Code is live in this repo (`x402_endpoint.py`, `test_x402_endpoint.py`,
+14 tests). **Public deployment is pending hosting acceptance** — the service
+fails closed until then; see [deploy/x402-endpoint-runbook.md](deploy/x402-endpoint-runbook.md).
+Until a public origin is announced here, use the CLI above or open an issue
+for the fixed-scope 25-USDC report offer.
+
 ## Tests
 
 ```sh
