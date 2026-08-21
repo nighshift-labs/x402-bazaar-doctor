@@ -16,6 +16,11 @@ Encodes the discriminators confirmed in x402-foundation/x402#3045:
   no matter how many settlements succeed (the #2993 resolution, re-derived by
   the #3045 method census). This seller-side cause outranks storage/indexing
   theories when ``unpaid_request_status`` is captured as 200.
+- A resource that answers ``400`` to an *unpaid* request is validating the
+  request body BEFORE the payment gate — ordering, not gating (#3045
+  catalogued-side census, novadyne-hq 2026-08-21: 49 operators, one 400,
+  zero 200s). Unpaid captures must use the seller's declared method; wrong-
+  verb probes produce misleading 405s (21 observed in the same census).
 
 Read-only: no chain queries, no signing, no network calls.
 """
@@ -26,6 +31,7 @@ import sys
 
 CONFIRMED = "confirmed"
 SPEC_DERIVED = "spec_derived"
+FIELD_OBSERVED = "field_observed"
 
 _ACTIONS = {
     "v1_envelope_extension_ignored": [
@@ -49,12 +55,17 @@ _ACTIONS = {
     "success_but_not_indexed": [
         "Focus on post-acceptance storage/indexing or discovery filtering; settlement and ingest both succeeded.",
         "Query discovery with the exact resource URL used in the paid request before concluding.",
-        "Before deeper debugging: confirm the resource answers 402 (not 200) to an unpaid request — a 200-on-unpaid resource is never catalogued (#2993).",
+        "Before deeper debugging: confirm the resource answers 402 (not 200) to an unpaid request — a 200-on-unpaid resource is never catalogued (#2993). Capture that unpaid status with the seller's declared method (read it from a catalogued sibling row at `extensions.bazaar.info.input.method`); probing with the wrong verb produces misleading 405s.",
     ],
     "unpaid_200_never_catalogued": [
         "Make the resource answer 402 PAYMENT-REQUIRED to unpaid requests; a resource that serves 200 without payment is never catalogued, regardless of successful settlements.",
         "After fixing the unpaid response, re-send one controlled paid request and re-check discovery by exact resource URL.",
         "Do not debug storage/indexing first: this seller-side cause explains settled-but-absent resources on its own.",
+    ],
+    "unpaid_400_body_validation_before_payment_gate": [
+        "The 400 to an unpaid request is request-body validation running BEFORE the payment gate — that is ordering, not gating, and not a #2993 signal.",
+        "Capture the unpaid status again with a spec-shaped empty body and the seller's declared method; if it still returns 400, fix body validation ordering so unpaid requests reach the 402 gate.",
+        "Do not rank this seller as 'possibly ungated': a catalogued-side census found exactly this shape at ai.stable-jack.com while 47/48 conclusive operators answered 402.",
     ],
     "indexed_ok": [],
     "verify_discovery": [
@@ -90,6 +101,12 @@ def diagnose(observation):
         and observation.get("unpaid_request_status") == 200
     ):
         diagnosis, confidence = "unpaid_200_never_catalogued", CONFIRMED
+    elif (
+        status == "success"
+        and observation.get("discovery_row_present") is False
+        and observation.get("unpaid_request_status") == 400
+    ):
+        diagnosis, confidence = "unpaid_400_body_validation_before_payment_gate", FIELD_OBSERVED
     elif status == "rejected":
         diagnosis, confidence = "catalog_rejected", SPEC_DERIVED
     elif status == "processing":

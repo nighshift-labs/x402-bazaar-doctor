@@ -1,3 +1,4 @@
+
 # x402 Bazaar Doctor
 
 Deterministic diagnostic for x402 payments that **settle successfully but never
@@ -9,7 +10,9 @@ publicly confirmed in
 [x402-foundation/x402#3045](https://github.com/x402-foundation/x402/issues/3045).
 The unpaid-200 rule below is the resolution of
 [#2993](https://github.com/x402-foundation/x402/issues/2993), re-derived by
-the #3045 method census.
+the #3045 method census. The unpaid-400 rule is field-observed from the
+#3045 catalogued-side census (49 operators, one per netloc: one `400`,
+zero `200`s, zero `405`s once the declared verb is used).
 
 ## Why
 
@@ -25,7 +28,14 @@ real, documented x402 operator failure. The discriminators are subtle:
   queue-delay, and post-acceptance indexing respectively;
 - **a resource that answers `200` to an unpaid request is never catalogued,
   no matter how many payments settle** — the most common seller-side cause,
-  and the first thing to check before blaming storage or indexing.
+  and the first thing to check before blaming storage or indexing;
+- **a resource that answers `400` to an unpaid request is validating the
+  request body before the payment gate** — ordering, not gating; a classifier
+  that buckets "not 402" as "possibly ungated" mis-ranks that seller;
+- **capture the unpaid status with the seller's declared method**
+  (`extensions.bazaar.info.input.method` on a catalogued sibling row) —
+  probing with the wrong verb produces misleading `405`s (21 observed in the
+  census before the verb fix).
 
 ## Diagnoses
 
@@ -36,6 +46,7 @@ real, documented x402 operator failure. The discriminators are subtle:
 | `catalog_rejected` | ingest rejected the extension; inspect `rejectedReason` against the schema |
 | `catalog_processing` | asynchronous indexing still running; poll by exact resource URL + settlement time |
 | `unpaid_200_never_catalogued` | settlement AND ingest succeeded, but the resource serves `200` without payment — make it answer `402`; it will never be catalogued otherwise |
+| `unpaid_400_body_validation_before_payment_gate` | the resource validates the request body BEFORE the payment gate — ordering, not gating; fix body-validation ordering so unpaid requests reach the 402 |
 | `success_but_not_indexed` | settlement and ingest OK, unpaid behavior correct; fault isolates to storage/indexing/discovery filtering |
 | `indexed_ok` / `verify_discovery` | healthy, or your discovery poll was too short |
 
@@ -51,7 +62,7 @@ Observation fields: `payment_scheme_version` (1|2),
 `discovery_row_present` (bool/null after a ≥10-minute poll), optional
 `rejected_reason`, `resource_url`, and `unpaid_request_status` (HTTP status
 the resource returns to a request carrying no payment — capture this before
-debugging anything else).
+debugging anything else, using the seller's declared method).
 
 Redact signatures, keys, and credentials before sharing observations anywhere.
 
