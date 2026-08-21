@@ -12,7 +12,37 @@ The unpaid-200 rule below is the resolution of
 [#2993](https://github.com/x402-foundation/x402/issues/2993), re-derived by
 the #3045 method census. The unpaid-400 rule is field-observed from the
 #3045 catalogued-side census (49 operators, one per netloc: one `400`,
-zero `200`s, zero `405`s once the declared verb is used).
+zero `200`s, zero `405`s once the declared verb is used) and **calibrated**
+against that census' per-row delivery, committed at
+[fixtures/x402_census_rows_2026-08-21.json](fixtures/x402_census_rows_2026-08-21.json)
+with the publisher's explicit in-thread authorization.
+
+## Census calibration
+
+The classifier is not just consistent with the census — it reproduces it.
+`summarize_census_rows()` ingests the delivered per-row shape
+(`resource`, `declared_verb`, `unpaid_status`, `error`), and the test suite
+asserts the exact published distribution: **49 rows / 49 distinct hosts,
+conclusive 48 → `402`: 47, `400`: 1, `200`: 0, timeout: 1** (verbs:
+27 `GET` / 22 `POST`). It encodes the census' own collection discipline:
+
+- one row per netloc — a duplicate host raises, because an operator with
+  many routes must not dominate the distribution;
+- templated paths raise — probing a placeholder invents a parameter, and a
+  `404`/`400` from a made-up value is indistinguishable from a real
+  ordering signal;
+- non-conclusive rows (timeouts) stay visible in the output, never silently
+  dropped from the denominator;
+- zero catalogued `200`-to-unpaid rows is recorded as a **bound**, not proof
+  of absence;
+- the unpaid-400 finding reports its rule status honestly: one independent
+  instance is `single_instance` (field-observed); a second instance from a
+  different operator flips it to `multi_instance` — the upgrade path the
+  census publisher asked for.
+
+```sh
+python3 x402_bazaar_doctor.py --census fixtures/x402_census_rows_2026-08-21.json
+```
 
 ## Why
 

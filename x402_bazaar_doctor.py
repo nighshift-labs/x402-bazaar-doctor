@@ -145,13 +145,104 @@ def diagnose(observation):
     }
 
 
+def summarize_census_rows(rows):
+    """Summarize catalogued-side unpaid-probe census rows (the #3045
+    calibration shape delivered by novadyne-hq, 2026-08-21).
+
+    Each row: {"resource", "declared_verb", "unpaid_status", "error"}.
+    Rows must be one per netloc (operator-level independence) and must
+    use concrete paths — a templated path means the probe invented a
+    parameter, and its status is not a real ordering signal.
+
+    Returns counts, the 400-shaped field_observed instances, the
+    non-conclusive rows (kept visible, never silently dropped), and a
+    rule-status for the unpaid-400 finding: a single instance stays
+    field_observed; a second independent instance is what upgrades it
+    toward a rule.
+    """
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("rows must be a non-empty list")
+
+    from urllib.parse import urlparse
+
+    hosts = []
+    status_counts = {}
+    verb_counts = {}
+    field_observed_400 = []
+    non_conclusive = []
+    for row in rows:
+        resource = row.get("resource") or ""
+        parsed = urlparse(resource)
+        host = parsed.netloc
+        if not host:
+            raise ValueError(f"row has no netloc: {resource!r}")
+        if host in hosts:
+            raise ValueError(
+                f"duplicate netloc breaks operator-level independence: {host}"
+            )
+        path = parsed.path
+        if "{" in path or "<" in path or ":" in path.split("/")[-1]:
+            raise ValueError(
+                "templated path: a probe with an invented parameter is not "
+                f"a real ordering signal: {resource!r}"
+            )
+        hosts.append(host)
+
+        verb = row.get("declared_verb")
+        verb_counts[verb] = verb_counts.get(verb, 0) + 1
+
+        status = row.get("unpaid_status")
+        error = row.get("error")
+        if status is None or error is not None:
+            non_conclusive.append({"resource": resource, "error": error})
+            continue
+        key = str(status)
+        status_counts[key] = status_counts.get(key, 0) + 1
+        if status == 400:
+            field_observed_400.append(
+                {
+                    "resource": resource,
+                    "declared_verb": verb,
+                    "unpaid_status": status,
+                }
+            )
+
+    conclusive = sum(status_counts.values())
+    return {
+        "rows": len(rows),
+        "distinct_hosts": len(hosts),
+        "conclusive": conclusive,
+        "non_conclusive": len(non_conclusive),
+        "status_counts": status_counts,
+        "declared_verb_counts": verb_counts,
+        "field_observed_400_rows": field_observed_400,
+        "field_observed_400_rule_status": (
+            "multi_instance" if len(field_observed_400) >= 2 else "single_instance"
+        ),
+        "bound_note": (
+            "Zero catalogued 200-to-unpaid rows in this sample is a bound on "
+            "how common that shape can be, not proof that none exists."
+        ),
+        "non_conclusive_rows": non_conclusive,
+    }
+
+
 def main(argv):
-    if len(argv) != 1:
-        print("usage: x402_bazaar_doctor.py <observation.json>", file=sys.stderr)
-        return 2
-    observation = json.loads(Path(argv[0]).read_text())
-    print(json.dumps(diagnose(observation), indent=2))
-    return 0
+    if len(argv) == 1:
+        observation = json.loads(Path(argv[0]).read_text())
+        print(json.dumps(diagnose(observation), indent=2))
+        return 0
+    if len(argv) == 2 and argv[0] == "--census":
+        payload = json.loads(Path(argv[1]).read_text())
+        rows = payload["rows"] if isinstance(payload, dict) else payload
+        print(json.dumps(summarize_census_rows(rows), indent=2))
+        return 0
+    print(
+        "usage: x402_bazaar_doctor.py <observation.json>"
+        " | --census <rows.json>",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":

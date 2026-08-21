@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from x402_bazaar_doctor import diagnose
+from x402_bazaar_doctor import diagnose, summarize_census_rows
 
 
 class V1EnvelopeTests(unittest.TestCase):
@@ -248,6 +248,133 @@ class Unpaid400BodyValidationTests(unittest.TestCase):
         result = diagnose(self._obs(unpaid_request_status=402))
         self.assertEqual(result["diagnosis"], "success_but_not_indexed")
         self.assertIn("declared", " ".join(result["recommended_actions"]).lower())
+
+
+class CensusCalibrationTests(unittest.TestCase):
+    """Calibration against the real per-row census novadyne-hq delivered in
+    #3045 comment 5370410212 (49 rows / 49 distinct operators, one per
+    netloc, declared verbs, committed with the publisher's explicit
+    authorization). The classifier must reproduce their published
+    distribution exactly and never misclassify the real shapes."""
+
+    @classmethod
+    def setUpClass(cls):
+        fixture = (
+            Path(__file__).parent
+            / "fixtures"
+            / "x402_census_rows_2026-08-21.json"
+        )
+        cls.census = json.loads(fixture.read_text())
+        cls.rows = cls.census["rows"]
+
+    def test_fixture_matches_published_census_shape(self):
+        self.assertEqual(len(self.rows), 49)
+        statuses = [r["unpaid_status"] for r in self.rows]
+        self.assertEqual(statuses.count(402), 47)
+        self.assertEqual(statuses.count(400), 1)
+        self.assertEqual(statuses.count(None), 1)
+        self.assertEqual(len({r["resource"] for r in self.rows}), 49)
+        self.assertTrue(
+            all(r["declared_verb"] in ("GET", "POST") for r in self.rows)
+        )
+
+    def test_summarize_reproduces_published_distribution(self):
+        summary = summarize_census_rows(self.rows)
+        self.assertEqual(summary["rows"], 49)
+        self.assertEqual(summary["distinct_hosts"], 49)
+        self.assertEqual(summary["conclusive"], 48)
+        self.assertEqual(summary["non_conclusive"], 1)
+        self.assertEqual(summary["status_counts"], {"402": 47, "400": 1})
+        self.assertEqual(summary["declared_verb_counts"], {"GET": 27, "POST": 22})
+
+    def test_summarize_flags_400_rows_as_field_observed_instances(self):
+        summary = summarize_census_rows(self.rows)
+        self.assertEqual(len(summary["field_observed_400_rows"]), 1)
+        row = summary["field_observed_400_rows"][0]
+        self.assertEqual(row["resource"], "https://ai.stable-jack.com/x402/tools/defi_bridge_intelligence")
+        self.assertEqual(row["declared_verb"], "POST")
+        self.assertEqual(row["unpaid_status"], 400)
+
+    def test_summarize_reports_zero_200s_as_a_bound(self):
+        summary = summarize_census_rows(self.rows)
+        self.assertEqual(summary["status_counts"].get("200", 0), 0)
+        self.assertIn("bound", summary["bound_note"].lower())
+
+    def test_summarize_keeps_timeout_rows_visible_not_silent(self):
+        summary = summarize_census_rows(self.rows)
+        self.assertEqual(len(summary["non_conclusive_rows"]), 1)
+        self.assertEqual(summary["non_conclusive_rows"][0]["error"], "TimeoutError")
+
+    def test_summarize_rejects_duplicate_netlocs(self):
+        """The census is one row per operator by design; a duplicated netloc
+        would silently break the independence the distribution is read for."""
+        duped = self.rows + [dict(self.rows[0])]
+        with self.assertRaises(ValueError):
+            summarize_census_rows(duped)
+
+    def test_summarize_rejects_templated_paths(self):
+        """Probing a placeholder path invents a parameter; the publisher's
+        caveat says a 404/400 from a made-up value is indistinguishable
+        from a real ordering signal."""
+        templated = [
+            {
+                "resource": "https://example.com/api/items/{id}",
+                "declared_verb": "GET",
+                "unpaid_status": 400,
+                "error": None,
+            }
+        ]
+        with self.assertRaises(ValueError):
+            summarize_census_rows(templated)
+
+    def test_second_independent_400_upgrades_field_observed_to_multi_instance(self):
+        """The publisher's explicit ask: the difference between a
+        field_observed note and a rule is a second independent 400-shaped
+        instance from a different operator."""
+        second_400 = [
+            {
+                "resource": "https://other-operator.example/v1/tool",
+                "declared_verb": "GET",
+                "unpaid_status": 400,
+                "error": None,
+            }
+        ]
+        summary = summarize_census_rows(self.rows + second_400)
+        self.assertEqual(len(summary["field_observed_400_rows"]), 2)
+        self.assertEqual(summary["field_observed_400_rule_status"], "multi_instance")
+        self.assertEqual(
+            summarize_census_rows(self.rows)["field_observed_400_rule_status"],
+            "single_instance",
+        )
+
+    def test_classifier_diagnoses_every_conclusive_census_row_consistently(self):
+        """Run the full census through diagnose(): the 47 clean 402 rows
+        (as success-but-absent observations) must classify as
+        success_but_not_indexed, the one 400 row as the unpaid-400
+        ordering diagnosis, and the timeout row must not be forced into
+        any unpaid-status rule."""
+        by_status = {}
+        for row in self.rows:
+            obs = {
+                "payment_scheme_version": 2,
+                "extensions_bazaar_key_present": True,
+                "settle_response_bazaar_present": True,
+                "bazaar_status": "success",
+                "discovery_row_present": False,
+                "unpaid_request_status": row["unpaid_status"],
+                "resource_url": row["resource"],
+            }
+            if row["error"] is not None:
+                obs["unpaid_request_status"] = None
+            result = diagnose(obs)
+            by_status.setdefault(row["unpaid_status"], set()).add(
+                result["diagnosis"]
+            )
+        self.assertEqual(by_status[402], {"success_but_not_indexed"})
+        self.assertEqual(
+            by_status[400], {"unpaid_400_body_validation_before_payment_gate"}
+        )
+        self.assertEqual(by_status[None], {"success_but_not_indexed"})
 
 
 if __name__ == "__main__":
