@@ -1,0 +1,48 @@
+{
+  "description": "Registry of known x402-adjacent platform payout wallets with per-entry provenance. Proposed in x402-foundation/x402#3226 round 4 (Circadian-agent, comment 5374882218): a third party who recognises a payer can reclassify an inflow automatically, making the bounty-sink false-positive class detectable by anyone rather than only by the wallet's owner. Every row carries provenance because identifying a platform wallet is itself an inference unless the platform confirms it.",
+  "provenance_tiers": {
+    "tx_hash_confirmed": "A public platform record names a transaction whose on-chain sender is the wallet; verified first-hand from chain data before entry. Strongest tier.",
+    "amount_timestamp_join": "Public platform event with amount+timestamp joins a chain transfer within seconds; no tx hash published. Weaker tier.",
+    "seller_ledger_inference": "Payments arrived from one address at plausible times for awards the seller knows they won; seller-asserted, chain-corroborated only in aggregate."
+  },
+  "wallets": [
+    {
+      "address": "0xddc6cc3e4d11c1f3527b867c7dad4ed9869c33f7",
+      "platform": "Taskmarket",
+      "role": "platform_payout_wallet",
+      "provenance": "tx_hash_confirmed",
+      "evidence": {
+        "source": "x402-foundation/x402#3226 comment 5375274665 (Circadian-agent, 2026-08-21T20:51Z): completed-award record publishes settlementTxHash 0xa508ae33ee84d53bdbbe49b6d982edfa86273fa6b6d6d479d42aaa9ad035d966",
+        "verification": "Receipt re-read first-hand 2026-08-21T21:1xZ via public Base RPC: status 0x1, block 50205488, 11 USDC transfers from this single sender = ten x 0.092500 worker payments + one x 0.075000 platform fee, matching the published award split to the unit.",
+        "chain_facts": {
+          "settlement_tx": "0xa508ae33ee84d53bdbbe49b6d982edfa86273fa6b6d6d479d42aaa9ad035d966",
+          "block": 50205488,
+          "status": "0x1",
+          "usdc_transfers": 11,
+          "worker_payments": 10,
+          "worker_payment_units": 92500,
+          "fee_payments": 1,
+          "fee_payment_units": 75000
+        }
+      }
+    },
+    {
+      "address": "0x26572ff23c6c52bfb1a69cb0c9114a8be443b422",
+      "platform": "Frantic",
+      "role": "platform_payout_wallet",
+      "provenance": "amount_timestamp_join",
+      "evidence": {
+        "source": "x402-foundation/x402#3226 comment 5374882218 (Circadian-agent, 2026-08-21T20:18Z): Frantic bounty records publish no addresses and no hashes, only an amount-and-timestamp PAID event; block 50236577 landed 3 seconds after the bounty-115 PAID instant",
+        "verification": "Block 50236577 re-read first-hand 2026-08-21T21:1xZ via public Base RPC: exactly one 8.000000 USDC transfer in the block, sender = this wallet, recipient = the Circadian seller wallet (tx 0x64cbf9e80d4cf37f9aabd56f7d0e404e25ded56fd26cb1713bb281fff716db6c).",
+        "chain_facts": {
+          "block": 50236577,
+          "amount_units": 8000000,
+          "tx": "0x64cbf9e80d4cf37f9aabd56f7d0e404e25ded56fd26cb1713bb281fff716db6c"
+        },
+        "honest_limit": "Amount+timestamp correlation is weaker than a published tx hash; per-entry provenance exists precisely so users can weight rows differently."
+      }
+    }
+  ],
+  "usage": "scripts/x402_bazaar_demand_probe.py loads this file (path relative to the script: ../fixtures/ in-repo, ./fixtures/ flat) and labels recognized payers in scan/never output. A wallet NOT in this registry stays unattributed - absence of a label is not evidence of absence.",
+  "license_note": "Facts about public chain data; addresses and transaction hashes are public record. Committed under the repository's Apache-2.0 license."
+}
