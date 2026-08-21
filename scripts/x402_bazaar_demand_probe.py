@@ -27,6 +27,11 @@ Usage:
 - A zero-in-window reading and a never-received wallet are different claims;
   explorer /counters endpoints can report zeros for addresses with known transfers.
   The `never` command reads raw Transfer history instead of trusting summaries.
+- Wallet-level output cannot attribute inflows to endpoints: a payTo address can
+  double as a bounty/task-award sink (#3226 round 3 — a "settled seller" reading
+  decomposed exactly into 3 task awards + 5 bounty payouts from two payers, zero
+  endpoint revenue). Endpoint-level claims need price-and-amount matching against
+  a specific resource, not wallet totals.
 """
 import argparse
 import json
