@@ -1,0 +1,42 @@
+{
+  "source": "x402-foundation/x402 issue #3045, comment 5371343985 (novadyne-hq, 2026-08-21T14:38:33Z)",
+  "method": "Publisher's own payTo clustering of the 49 rows committed in x402_census_rows_2026-08-21.json. The publisher truncated payTo addresses in-thread; cluster labels here are those published truncated forms. Resources not listed are singleton clusters. Counts asserted by the publisher and reproduced by our reducer: 49 netlocs, 42 payTo clusters (netloc over-counts independence by 7); registrable-domain collapse gives 39 (under-counts by 3).",
+  "clusters": [
+    {
+      "cluster": "0x8c128f1e\u2026",
+      "resources": [
+        "https://agent-arcade.use.x402atlas.com/shortest-path/daily",
+        "https://ebay.use.x402atlas.com/sold",
+        "https://jobs.use.x402atlas.com/search",
+        "https://youtube.use.x402atlas.com/transcript"
+      ]
+    },
+    {
+      "cluster": "0x50ab2018\u2026",
+      "resources": [
+        "https://autopulse.theaslangroupllc.com/api/auto/value",
+        "https://onchainpulse.theaslangroupllc.com/api/iso-receipt",
+        "https://remittancepulse.theaslangroupllc.com/api/remit/rate"
+      ]
+    },
+    {
+      "cluster": "0x276efa09\u2026",
+      "resources": [
+        "https://grant-search.krimskrams.xyz/v1/scan",
+        "https://osha-search.krimskrams.xyz/v1/search"
+      ]
+    },
+    {
+      "cluster": "0x2880edff\u2026",
+      "resources": [
+        "https://natur.halowerk.com/v1/volcanic-ash-route",
+        "https://stat.halowerk.com/v1/credit-cycle"
+      ]
+    }
+  ],
+  "explicit_splits_publisher_called_out": [
+    "railway.app hosts carry two distinct payTo (oracles-production\u2026 vs vn-gold-fx-x402-production\u2026) \u2014 shared PaaS domain is not a shared operator",
+    "zeroclick.io hosts carry two distinct payTo (bytemine.pay\u2026 vs deepai.pay\u2026)",
+    "hotels.use.x402atlas.com is NOT part of the x402atlas group payTo (group is 4 of 5 atlas netlocs)"
+  ]
+}
