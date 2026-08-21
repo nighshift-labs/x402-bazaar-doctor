@@ -250,6 +250,117 @@ class Unpaid400BodyValidationTests(unittest.TestCase):
         self.assertIn("declared", " ".join(result["recommended_actions"]).lower())
 
 
+class DormantBranchAndCaveatTests(unittest.TestCase):
+    """novadyne-hq's 2026-08-21T16:02Z coverage table (#3045 comment
+    5372262095): 15,058 catalog rows all carry `payTo`, so the no-payTo
+    branch of our cluster rule currently has ZERO real rows behind it —
+    agreement between our convention and theirs is untested there and must
+    not accrue confidence it hasn't earned. Same comment names the mirror
+    failure mode: netloc could OVER-fire `multi_instance`, but `payTo`
+    UNDER-fires it when two independent operators settle to one custodial
+    or facilitator-managed wallet. Both facts belong in-product, not just
+    in a comment."""
+
+    @classmethod
+    def setUpClass(cls):
+        fixtures = Path(__file__).parent / "fixtures"
+        cls.census = json.loads(
+            (fixtures / "x402_census_rows_2026-08-21.json").read_text()
+        )
+        cls.rows = cls.census["rows"]
+        annotation = json.loads(
+            (
+                fixtures / "x402_census_payto_clusters_2026-08-21.json"
+            ).read_text()
+        )
+        cls.payto = {}
+        for cluster in annotation["clusters"]:
+            for resource in cluster["resources"]:
+                cls.payto[resource] = cluster["cluster"]
+
+    def _annotated(self):
+        return [
+            dict(row, payto=self.payto.get(row["resource"]))
+            for row in self.rows
+        ]
+
+    def _fully_labeled(self):
+        """Mirror the publisher's catalog-wide coverage table (15,058/15,058
+        rows carry `payTo`): every row gets a label — multi-hostname groups
+        from the published clustering, each singleton its own wallet."""
+        return [
+            dict(
+                row,
+                payto=self.payto.get(row["resource"], f"solo:{row['resource']}"),
+            )
+            for row in self.rows
+        ]
+
+    def test_fully_labeled_census_reports_the_branch_has_zero_real_rows(self):
+        """On the catalog shape the publisher measured (every row labeled),
+        the no-payTo cluster branch has no real rows behind it."""
+        result = summarize_census_rows(self._fully_labeled())
+        self.assertEqual(result["rows_without_payto"], 0)
+        self.assertEqual(
+            result["rows_without_payto_branch_status"],
+            "zero_rows_behind_it_in_publisher_coverage",
+        )
+
+    def test_group_only_annotation_leaves_the_branch_dormant_not_proven(self):
+        """The committed fixture carries ONLY the published multi-hostname
+        group labels — 38 singleton rows stay unlabeled by design, so the
+        branch is exercised there and must be reported as untested against
+        real data, never as evidence."""
+        result = summarize_census_rows(self._annotated())
+        self.assertEqual(result["rows_without_payto"], 38)
+        self.assertEqual(
+            result["rows_without_payto_branch_status"],
+            "dormant_untested_against_real_data",
+        )
+
+    def test_mixed_input_flags_the_dormant_branch_instead_of_quiet_confidence(self):
+        """When unlabeled rows DO appear, the branch is exercised but still
+        untested against real data — it must be reported as such."""
+        mixed = [dict(self.rows[0])]  # deliberately unlabeled
+        result = summarize_census_rows(mixed)
+        self.assertEqual(result["rows_without_payto"], 1)
+        self.assertEqual(
+            result["rows_without_payto_branch_status"],
+            "dormant_untested_against_real_data",
+        )
+
+    def test_summary_carries_the_payto_under_fire_caveat(self):
+        """The shared-custodial-wallet blind spot must be stated wherever
+        cluster counts are produced — not left in a forum comment."""
+        result = summarize_census_rows(self._annotated())
+        note = result["payto_cluster_under_fire_note"]
+        self.assertIn("custodial", note)
+        self.assertIn("UNDER-fires", note)
+
+    def test_unpaid_400_action_names_the_shared_wallet_limit(self):
+        """The endpoint-facing diagnosis must carry the same honesty: a
+        single_instance verdict is partly an artifact of payTo being
+        conservative when wallets are shared."""
+        observation = {
+            "payment_scheme_version": 2,
+            "extensions_bazaar_key_present": True,
+            "settle_response_bazaar_present": True,
+            "bazaar_status": "success",
+            "discovery_row_present": False,
+            "unpaid_request_status": 400,
+            "resource_url": "https://example.com/paid-report",
+        }
+        result = diagnose(observation)
+        self.assertTrue(
+            any(
+                "custodial" in action.lower()
+                or "shared wallet" in action.lower()
+                for action in result["recommended_actions"]
+            ),
+            "unpaid-400 actions must name the payTo under-fire limit",
+        )
+
+
 class CensusCalibrationTests(unittest.TestCase):
     """Calibration against the real per-row census novadyne-hq delivered in
     #3045 comment 5370410212 (49 rows / 49 distinct operators, one per
