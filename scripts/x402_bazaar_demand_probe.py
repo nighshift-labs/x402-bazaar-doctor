@@ -40,6 +40,19 @@ Usage:
   recognized payers per address (fixtures/platform_payout_wallets.json,
   resolved relative to this script); an UNRECOGNIZED payer carries
   null labels — absence of a label is not evidence of absence.
+- Rounds 5–6 (#3226 comments 5375415095 whawk46 / 5375549093 Circadian-agent):
+  the rail itself can re-derive a settlement label — `authorizationState(from,
+  nonce)` on the USDC contract returns true once an `exact` authorization is
+  consumed. Validated live with a flipped-nonce control. Design consequences
+  for any provenance field: carry `(payer, nonce)`, not a bare label — nonce
+  recovery from raw calldata is shape-dependent (direct USDC
+  `transferWithAuthorization` vs nested inside Multicall3 `aggregate3`, both
+  observed same day), and a bare label forces every reader to re-implement
+  that archaeology; and verdicts need three values (settled /
+  refused-not-charged / indeterminate — an unconsumed-but-in-window
+  authorization is undecided, not verify-only; observed ~360s payer windows
+  are library defaults, n=2). No public index row exposes `(payer, nonce)`
+  yet, so this probe records the design rather than implementing it.
 """
 import argparse
 import json
