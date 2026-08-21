@@ -305,12 +305,16 @@ class CensusCalibrationTests(unittest.TestCase):
         self.assertEqual(len(summary["non_conclusive_rows"]), 1)
         self.assertEqual(summary["non_conclusive_rows"][0]["error"], "TimeoutError")
 
-    def test_summarize_rejects_duplicate_netlocs(self):
-        """The census is one row per operator by design; a duplicated netloc
-        would silently break the independence the distribution is read for."""
+    def test_summarize_accepts_duplicate_netlocs_route_level(self):
+        """Correction recorded from the publisher (#3045 comment
+        5371343985): several rows per netloc is route-level data, not an
+        independence violation. The old one-row-per-netloc guard encoded
+        the wrong key and would have rejected the un-deduped set they
+        told us to run. Independence is a payTo-cluster question now."""
         duped = self.rows + [dict(self.rows[0])]
-        with self.assertRaises(ValueError):
-            summarize_census_rows(duped)
+        summary = summarize_census_rows(duped)
+        self.assertEqual(summary["rows"], 50)
+        self.assertEqual(summary["distinct_hosts"], 49)
 
     def test_summarize_rejects_templated_paths(self):
         """Probing a placeholder path invents a parameter; the publisher's
@@ -375,6 +379,130 @@ class CensusCalibrationTests(unittest.TestCase):
             by_status[400], {"unpaid_400_body_validation_before_payment_gate"}
         )
         self.assertEqual(by_status[None], {"success_but_not_indexed"})
+
+
+class PaytoClusteringTests(unittest.TestCase):
+    """The publisher's own correction (#3045 comment 5371343985): netloc is
+    the wrong independence key — one operator can wear several hostnames,
+    so `multi_instance` must be computed over `payTo` clusters, and the
+    reducer must accept route-level rows (several rows per host) without a
+    netloc-uniqueness guard. The publisher's numbers on our committed 49
+    rows are the oracle: 49 netlocs, 42 payTo clusters, and four named
+    multi-hostname groups."""
+
+    @classmethod
+    def setUpClass(cls):
+        fixtures = Path(__file__).parent / "fixtures"
+        cls.census = json.loads(
+            (fixtures / "x402_census_rows_2026-08-21.json").read_text()
+        )
+        cls.rows = cls.census["rows"]
+        cls.annotation = json.loads(
+            (fixtures / "x402_census_payto_clusters_2026-08-21.json").read_text()
+        )
+        cls.payto = {}
+        for cluster in cls.annotation["clusters"]:
+            for resource in cluster["resources"]:
+                cls.payto[resource] = cluster["cluster"]
+
+    def _annotated(self):
+        return [
+            dict(row, payto=self.payto.get(row["resource"]))
+            for row in self.rows
+        ]
+
+    def test_annotation_covers_exactly_the_published_multi_hostname_groups(self):
+        self.assertEqual(len(self.payto), 11)
+        self.assertEqual(len(self.annotation["clusters"]), 4)
+
+    def test_payto_clusters_reproduce_the_publishers_count(self):
+        summary = summarize_census_rows(self._annotated())
+        self.assertEqual(summary["rows"], 49)
+        self.assertEqual(summary["distinct_hosts"], 49)
+        self.assertEqual(summary["distinct_payto_clusters"], 42)
+
+    def test_netloc_over_counts_independence_by_seven(self):
+        summary = summarize_census_rows(self._annotated())
+        self.assertEqual(
+            summary["distinct_hosts"] - summary["distinct_payto_clusters"], 7
+        )
+
+    def test_missing_payto_is_its_own_cluster_not_an_invisible_merge(self):
+        """The publisher's explicit request: a row with no `payTo` must be
+        its own cluster — a silent fallback to hostnames reintroduces the
+        same error at a smaller n. Dropping the label from a GROUP member
+        must split it out of the group (43 clusters), not merge it back
+        by hostname."""
+        annotated = self._annotated()
+        target = next(
+            i
+            for i, r in enumerate(annotated)
+            if r["resource"] == "https://ebay.use.x402atlas.com/sold"
+        )
+        annotated[target].pop("payto")
+        summary = summarize_census_rows(annotated)
+        self.assertEqual(summary["rows"], 49)
+        self.assertEqual(summary["distinct_payto_clusters"], 43)
+        # 38 unannotated singletons + the popped group member.
+        self.assertEqual(summary["rows_without_payto"], 39)
+
+    def test_second_400_on_the_same_payto_does_not_upgrade_the_rule(self):
+        """The false-upgrade trap: two hostnames of ONE operator both
+        answering 400 is a single independent instance. The upgrade fires
+        only on a second distinct payTo cluster. Synthetic rows isolate
+        the rule; the real fixture carries exactly one 400."""
+        same_operator = [
+            {
+                "resource": "https://host-a.example/v1/tool",
+                "declared_verb": "GET",
+                "unpaid_status": 400,
+                "error": None,
+                "payto": "0xsame…",
+            },
+            {
+                "resource": "https://host-b.example/v1/tool",
+                "declared_verb": "POST",
+                "unpaid_status": 400,
+                "error": None,
+                "payto": "0xsame…",
+            },
+        ]
+        summary = summarize_census_rows(same_operator)
+        self.assertEqual(len(summary["field_observed_400_rows"]), 2)
+        self.assertEqual(summary["field_observed_400_distinct_clusters"], 1)
+        self.assertEqual(summary["field_observed_400_rule_status"], "single_instance")
+
+        stranger = {
+            "resource": "https://host-c.example/v1/tool",
+            "declared_verb": "GET",
+            "unpaid_status": 400,
+            "error": None,
+            "payto": "0xother…",
+        }
+        summary = summarize_census_rows(same_operator + [stranger])
+        self.assertEqual(summary["field_observed_400_distinct_clusters"], 2)
+        self.assertEqual(summary["field_observed_400_rule_status"], "multi_instance")
+
+    def test_route_level_rows_are_accepted_not_rejected(self):
+        """The un-deduped route-level set is several rows per netloc by
+        design; a duplicate-host guard would reject the very data the
+        publisher told us to run. Duplicate rows must be allowed and
+        netloc must remain a reported display field, never the key."""
+        annotated = self._annotated()
+        extra = dict(annotated[0])
+        extra["resource"] = annotated[0]["resource"] + "-route2"
+        summary = summarize_census_rows(annotated + [extra])
+        self.assertEqual(summary["rows"], 50)
+        self.assertEqual(summary["distinct_hosts"], 49)
+
+    def test_publisher_called_out_splits_are_not_merged(self):
+        """railway.app / zeroclick.io / hotels.use.x402atlas.com stay
+        separate clusters: shared hosting is not a shared operator."""
+        summary = summarize_census_rows(self._annotated())
+        self.assertEqual(
+            summary["distinct_payto_clusters"],
+            summary["distinct_hosts"] - 7,
+        )
 
 
 if __name__ == "__main__":
