@@ -32,6 +32,14 @@ Usage:
   decomposed exactly into 3 task awards + 5 bounty payouts from two payers, zero
   endpoint revenue). Endpoint-level claims need price-and-amount matching against
   a specific resource, not wallet totals.
+- Round-4 mitigation (#3226 comment 5374882218): a REGISTRY of known platform
+  payout wallets with per-entry provenance lets anyone reclassify an inflow the
+  moment the payer is recognised. Both initial rows were verified first-hand from
+  chain data before entry (Taskmarket: published settlementTxHash whose on-chain
+  sender is the wallet; Frantic: public amount+timestamp join). `scan` labels
+  recognized payers per address (fixtures/platform_payout_wallets.json,
+  resolved relative to this script); an UNRECOGNIZED payer carries
+  null labels — absence of a label is not evidence of absence.
 """
 import argparse
 import json
@@ -39,6 +47,7 @@ import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -48,6 +57,61 @@ USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 DISCOVERY = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
 SECONDS_PER_BLOCK = 2.0
+REGISTRY_FILENAME = "platform_payout_wallets.json"
+
+
+def default_registry_path():
+    """Locate the payer registry relative to this script (repo or flat layout)."""
+    here = Path(__file__).resolve().parent
+    for cand in (here.parent / "fixtures" / REGISTRY_FILENAME,
+                 here / "fixtures" / REGISTRY_FILENAME,
+                 here.parent / "tools" / "fixtures" / REGISTRY_FILENAME):
+        if cand.exists():
+            return str(cand)
+    return None
+
+
+def load_payer_registry(path):
+    """Load the platform payout wallet registry -> {lower_addr: {platform, provenance}}.
+
+    Raises ValueError on any entry missing address/platform/provenance: a row
+    without provenance is exactly the inference-in-disguise this file exists to
+    prevent (#3226 round 4).
+    """
+    data = json.load(open(path))
+    reg = {}
+    for w in data.get("wallets", []):
+        addr = w.get("address")
+        if not (isinstance(addr, str) and addr.startswith("0x") and len(addr) == 42):
+            raise ValueError(f"registry entry without valid address: {w!r}")
+        if not w.get("platform") or not w.get("provenance"):
+            raise ValueError(f"registry entry without platform+provenance: {addr}")
+        reg[addr.lower()] = {
+            "platform": w["platform"],
+            "provenance": w["provenance"],
+            "role": w.get("role"),
+        }
+    return reg
+
+
+def _load_registry_arg(registry_path):
+    """Resolve the scan --registry argument: None=disabled, 'auto'/missing=default."""
+    if registry_path is None or registry_path == "none":
+        return {}
+    if registry_path in ("", "auto"):
+        p = default_registry_path()
+        return load_payer_registry(p) if p else {}
+    return load_payer_registry(registry_path)
+
+
+def label_payers(registry_map, payers):
+    """Map each payer address to its platform label (or None when unrecognized)."""
+    out = {}
+    for p in payers:
+        hit = registry_map.get(p.lower())
+        out[p.lower()] = ({"platform": hit["platform"],
+                           "provenance": hit["provenance"]} if hit else None)
+    return out
 
 
 def rpc_post(url, payload, timeout=90):
@@ -142,10 +206,11 @@ def collect_paytos(bazaar, top_hosts=None):
     return sorted(allp), dict(host_pay)
 
 
-def scan(paytos, hours):
+def scan(paytos, hours, registry_path="auto"):
     L = latest_block()
     start = L - int(hours * 3600 / SECONDS_PER_BLOCK)
     hits, totals, senders = _scan_window(paytos, start, L)
+    registry_map = _load_registry_arg(registry_path)
     result = {
         "measured_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "window_hours": hours,
@@ -155,7 +220,22 @@ def scan(paytos, hours):
         "total_payments": sum(hits.values()),
         "total_usdc": round(sum(totals.values()), 6),
         "per_address": {a: {"payments": hits[a], "usdc_in": round(totals[a], 6),
-                            "distinct_payers": len(senders[a])} for a in hits},
+                            "distinct_payers": len(senders[a]),
+                            "payers": [
+                                {"payer": p,
+                                 **(label_payers(registry_map, [p])[p.lower()] or
+                                    {"platform": None, "provenance": None})}
+                                for p in sorted(senders[a])],
+                            # A scanned wallet that IS a known platform payout
+                            # wallet is labeled itself: its inflows are platform
+                            # funding, not endpoint revenue (#3226 round 4).
+                            **({"wallet_label":
+                                dict(label_payers(registry_map, [a])[a.lower()],
+                                     source="registry_self")
+                                if label_payers(registry_map, [a])[a.lower()]
+                                else {}}
+                               if registry_map else {})}
+                        for a in hits},
     }
     print(json.dumps({k: v for k, v in result.items() if k != "per_address"}, indent=1))
     return result
@@ -228,7 +308,7 @@ def _scan_window(paytos, lo, hi):
     return hits, totals, senders
 
 
-def never_received(paytos, hours, history_days=None):
+def never_received(paytos, hours, history_days=None, registry_path="auto"):
     """Split zero-in-window from never-received by reading Transfer history.
 
     A 24h zero is one measurement; a wallet that has NEVER received anything is a
@@ -245,6 +325,7 @@ def never_received(paytos, hours, history_days=None):
         hist_start, bounded = L - int(history_days * 86400 / SECONDS_PER_BLOCK), True
     win_hits, win_totals, win_senders = _scan_window(paytos, start, L)
     hist_hits, hist_totals, hist_senders = _scan_window(paytos, hist_start, L)
+    registry_map = _load_registry_arg(registry_path)
     per_address = {}
     for w in paytos:
         recent_n = win_hits.get(w, 0)
@@ -261,6 +342,19 @@ def never_received(paytos, hours, history_days=None):
             "history_payments": hist_n,
             "history_usdc_in": round(hist_totals.get(w, 0.0), 6),
             "distinct_payers_all_time": len(hist_senders.get(w, set())),
+            "payers": [
+                {"payer": p,
+                 **(label_payers(registry_map, [p])[p.lower()] or
+                    {"platform": None, "provenance": None})}
+                for p in sorted(hist_senders.get(w, set()))
+            ],
+            # Self-label when the scanned wallet is itself a known platform
+            # payout wallet: its inflows are platform funding (#3226 round 4).
+            **({"wallet_label":
+                dict(label_payers(registry_map, [w])[w.lower()], source="registry_self")
+                if label_payers(registry_map, [w])[w.lower()]
+                else {}}
+               if registry_map else {}),
             "classification": cls,
         }
     result = {
@@ -291,6 +385,9 @@ def main():
     s.add_argument("--hours", type=float, default=24)
     s.add_argument("--top-hosts", type=int, default=None)
     s.add_argument("--out", default=None)
+    s.add_argument("--registry", default="auto",
+                   help="payer registry JSON: path, 'auto' (default; repo fixture "
+                        "when present) or 'none' to disable labeling")
     v = sub.add_parser("validate")
     w = sub.add_parser("whois")
     w.add_argument("bazaar_json")
@@ -301,6 +398,9 @@ def main():
                    help="bound the history pass; empty history is then reported "
                         "as no_transfers_in_history_window, not never_received")
     n.add_argument("--out", default=None)
+    n.add_argument("--registry", default="auto",
+                   help="payer registry JSON: path, 'auto' (default; repo fixture "
+                        "when present) or 'none' to disable labeling")
     n.add_argument("wallets", nargs="+")
     args = ap.parse_args()
 
@@ -316,7 +416,8 @@ def main():
     if args.cmd == "never":
         wallets = [w.lower() for w in args.wallets]
         print(f"classifying {len(wallets)} wallets: {args.hours}h window vs history...")
-        result = never_received(wallets, args.hours, history_days=args.history_days)
+        result = never_received(wallets, args.hours, history_days=args.history_days,
+                                registry_path=args.registry)
         if args.out:
             json.dump(result, open(args.out, "w"), indent=1)
             print(f"wrote {args.out}")
@@ -325,7 +426,7 @@ def main():
     bazaar = json.load(open(args.bazaar_json))
     paytos, _hosts = collect_paytos(bazaar, top_hosts=args.top_hosts)
     print(f"scanning {len(paytos)} seller payTo wallets for {args.hours}h of USDC Transfers...")
-    result = scan(paytos, args.hours)
+    result = scan(paytos, args.hours, registry_path=args.registry)
     if args.out:
         json.dump(result, open(args.out, "w"), indent=1)
         print(f"wrote {args.out}")
