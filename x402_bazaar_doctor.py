@@ -66,6 +66,7 @@ _ACTIONS = {
         "The 400 to an unpaid request is request-body validation running BEFORE the payment gate — that is ordering, not gating, and not a #2993 signal.",
         "Capture the unpaid status again with a spec-shaped empty body and the seller's declared method; if it still returns 400, fix body validation ordering so unpaid requests reach the 402 gate.",
         "Do not rank this seller as 'possibly ungated': a catalogued-side census found exactly this shape at ai.stable-jack.com while 47/48 conclusive operators answered 402.",
+        "A single_instance verdict is conservative: the `payTo` cluster key UNDER-fires when two genuinely independent operators settle to one shared or custodial/facilitator-managed wallet — confirm wallet ownership before treating independence as proven.",
     ],
     "indexed_ok": [],
     "verify_discovery": [
@@ -243,6 +244,19 @@ def summarize_census_rows(rows):
         "bound_note": (
             "Zero catalogued 200-to-unpaid rows in this sample is a bound on "
             "how common that shape can be, not proof that none exists."
+        ),
+        "rows_without_payto_branch_status": (
+            "dormant_untested_against_real_data"
+            if rows_without_payto
+            else "zero_rows_behind_it_in_publisher_coverage"
+        ),
+        "payto_cluster_under_fire_note": (
+            "The `payTo` cluster key UNDER-fires `multi_instance`: two "
+            "genuinely independent operators settling to one shared or "
+            "custodial/facilitator-managed wallet read as a single cluster, "
+            "so single_instance stays silent when it should fire. The index "
+            "does not distinguish shared custodians from single operators; "
+            "cluster counts are an operator proxy, not identity."
         ),
         "non_conclusive_rows": non_conclusive,
     }
