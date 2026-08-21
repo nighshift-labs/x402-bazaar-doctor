@@ -186,11 +186,17 @@ facilitator-routed `exact` settlements still emit plain USDC
 `Transfer(to=payTo)` logs — under `transferWithAuthorization` the facilitator is
 the transaction sender while the event keeps payer→payee — so this probe sees
 them. The bound applies only to schemes settling off the USDC contract or
-batched into internal accounting moves. The same review produced a live
-counterexample to index completeness: a seller wallet with verified settlements
-(8.0 USDC received, facilitator-mediated) has **no row in the discovery index**
-— settled-but-not-indexed is real, which is exactly the failure mode
-`/diagnose` classifies.
+batched into internal accounting moves.
+
+**Correction (same review, round 3):** the wallet-level "settled seller with no
+index row" counterexample first reported here was withdrawn after the seller
+published their own ledger: their `payTo` doubles as a task-award/bounty sink.
+Independently re-verified from raw logs — 8 inflows / 21.73 USDC / 90 days
+decompose exactly into 3 task awards (9.729335) + 5 bounty payouts (12.0) from
+two payers; **zero endpoint settlements**. Wallet-level reads cannot attribute
+inflows to endpoints. A real instance of settled-but-not-indexed needs a
+settlement matching a specific resource's advertised price and timing, with no
+row — which is exactly what `/diagnose` classifies per-resource.
 
 ## Tests
 
