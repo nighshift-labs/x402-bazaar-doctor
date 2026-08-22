@@ -572,5 +572,102 @@ class LatestBlockFailoverTests(unittest.TestCase):
                          "an all-refusing pool must not spin retries")
 
 
+class _FailingRpc:
+    """rpc_post stand-in answering eth_blockNumber, raising on chosen getLogs.
+
+    raise_all      -> every eth_getLogs call raises (dead pool);
+    raise_before   -> getLogs whose fromBlock is below this int raises
+                      (models the history pass dying while the recent
+                      window sweep serves cleanly).
+    """
+
+    def __init__(self, raise_all=False, raise_before=None):
+        self.raise_all = raise_all
+        self.raise_before = raise_before
+
+    def __call__(self, url, payload, timeout=90):
+        method = payload["method"]
+        if method == "eth_blockNumber":
+            body = {"result": "0x20000"}
+        else:
+            p = payload["params"][0]
+            doomed = self.raise_all or (
+                self.raise_before is not None
+                and int(p["fromBlock"], 16) < self.raise_before)
+            if doomed:
+                raise RuntimeError("eth_getLogs failed: pool exhausted")
+            body = {"result": []}
+
+        class R:
+            status_code = 200
+
+            def json(self_inner):
+                return body
+
+        return R()
+
+
+class ScanWindowFailClosedTests(unittest.TestCase):
+    """A partially-read window is not a measurement (2026-08-22, BACKLOG item 8).
+
+    Residual member of the getlogs defect class: _scan_window used to catch
+    pool-exhaustion exceptions per chunk-group, print a WARN, and continue —
+    so a mid-scan RPC-pool death emitted partial aggregates that read exactly
+    like a legitimate zero-demand result. The instrument's own round-10 rule
+    (#3226 comment 5378898430) already commits it to fail closed: an
+    unreachable pool raises; it never fabricates a zero.
+    """
+
+    def _run(self, fn, *a, **kw):
+        fake = kw.pop("fake")
+        with patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            return fn(*a, **kw)
+
+    def test_scan_aborts_when_every_getlogs_call_fails(self):
+        fake = _FailingRpc(raise_all=True)
+        with self.assertRaises(RuntimeError):
+            self._run(probe.scan, [PAYTO_A], hours=1, fake=fake)
+
+    def test_never_aborts_when_the_window_sweep_fails(self):
+        fake = _FailingRpc(raise_all=True)
+        with self.assertRaises(RuntimeError):
+            self._run(probe.never_received, [PAYTO_A], hours=24, fake=fake)
+
+    def test_never_aborts_when_only_the_history_sweep_fails(self):
+        # Sharper half: the recent window sweeps clean, so every wallet LOOKS
+        # classifiable — but the history pass dies. Classifying anyway would
+        # convert an unreadable history into never_received or a bounded
+        # null, i.e. fabricate the exact claim this command exists to make
+        # honestly.
+        L = 0x20000
+        win_start = L - int(24 * 3600 / probe.SECONDS_PER_BLOCK)
+        fake = _FailingRpc(raise_before=win_start)
+        with self.assertRaises(RuntimeError):
+            self._run(probe.never_received, [PAYTO_A], hours=24,
+                      history_days=2, fake=fake)
+
+    def test_one_dead_range_invalidates_an_otherwise_clean_scan(self):
+        # Most chunk-groups serve fine; one middle range is unreadable. The
+        # aggregate must still abort: partial coverage must never masquerade
+        # as a measurement.
+        L = 0x20000
+        dead_lo, dead_hi = L - 15000, L - 12000   # inside a 12h window
+
+        class Mostly(_FailingRpc):
+            def __call__(self, url, payload, timeout=90):
+                if payload["method"] != "eth_getLogs":
+                    return super().__call__(url, payload, timeout=timeout)
+                p = payload["params"][0]
+                if (int(p["fromBlock"], 16) <= dead_lo
+                        and int(p["toBlock"], 16) >= dead_hi):
+                    raise RuntimeError("pool exhausted mid-scan")
+                return super().__call__(url, payload, timeout=timeout)
+
+        fake = Mostly()
+        with self.assertRaises(RuntimeError):
+            self._run(probe.scan, [PAYTO_A], hours=12, fake=fake)
+
+
 if __name__ == "__main__":
     unittest.main()
