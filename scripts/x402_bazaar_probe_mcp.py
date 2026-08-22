@@ -37,6 +37,7 @@ from typing import Any, List, Optional, Union
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 HERE = Path(__file__).resolve().parent
 
@@ -68,7 +69,16 @@ _spec = importlib.util.spec_from_file_location(
 PROBE = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(PROBE)
 
-mcp = FastMCP("x402-bazaar-demand-probe")
+mcp = FastMCP(
+    "x402-bazaar-demand-probe",
+    # Public deployment surface: the SDK's DNS-rebinding guard only knows
+    # localhost host/origin patterns, so leaving it enabled would 403 every
+    # request addressed by a real hostname or public origin (Smithery scans,
+    # remote MCP clients). Disable it here and rely on the read-only tool
+    # surface + per-process rate limits as the abuse boundary.
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False),
+)
 
 # Per-process rate limit for chain-touching tools: max calls AND min seconds
 # between calls, enforced jointly. Generous for humans/agents doing real
@@ -392,6 +402,24 @@ def wallet_never(wallets: List[str], hours: float = 24.0,
             row["payers_capped_at"] = MAX_PAYERS_PER_WALLET
             row["payers"] = (per[a].get("payers") or [])[:MAX_PAYERS_PER_WALLET]
     return _ok({**result, "per_address": trimmed})
+
+
+def streamable_http_app():
+    """ASGI app serving the same six tools over Streamable HTTP at /mcp.
+
+    This is the transport Smithery's URL-publish flow requires (stdio is
+    not scannable remotely). Mount under uvicorn:
+
+        uvicorn x402_bazaar_probe_mcp:streamable_http_app --factory
+
+    The stateless setting means every request stands alone - no session
+    affinity required behind proxies or host restarts. DNS-rebinding
+    protection is disabled in the FastMCP constructor above; the abuse
+    boundary remains the read-only tool set plus the per-process rate
+    limits on chain-touching tools.
+    """
+    mcp.settings.stateless_http = True
+    return mcp.streamable_http_app()
 
 
 if __name__ == "__main__":
