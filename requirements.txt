@@ -1,0 +1,12 @@
+# Install set for the x402-payable diagnose endpoint
+# (deploy/x402-endpoint-runbook.md). Verified against x402 2.20.0.
+#
+# pyjwt + cryptography are ALSO transitive dependencies of x402[all] today;
+# they are listed explicitly because deploy/mint_cdp_jwt.py imports them
+# directly (CDP JWT auth for the facilitator) and transitive luck is not a
+# dependency contract for a payment path.
+x402[all]>=2.20
+starlette
+uvicorn
+pyjwt
+cryptography
