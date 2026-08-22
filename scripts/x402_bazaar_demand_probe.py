@@ -101,6 +101,14 @@ DISCOVERY = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
 SECONDS_PER_BLOCK = 2.0
 REGISTRY_FILENAME = "platform_payout_wallets.json"
 
+# Endpoints refusing a method (HTTP 403/404/405 or JSON-RPC -32601) are skipped
+# FOR THE CURRENT CALL ONLY: live testing (2026-08-22) showed one pooled Base
+# RPC 403 eth_getLogs under burst and serve the identical query minutes later,
+# so cross-call memoization would poison healthy endpoints. Worst case is one
+# wasted attempt per call; ordinary transient errors pay a cooldown sleep, a
+# refusal rotates immediately without one.
+_CAPABILITY_HTTP_CODES = (403, 404, 405)
+
 
 def default_registry_path():
     """Locate the payer registry relative to this script (repo or flat layout)."""
@@ -160,24 +168,53 @@ def rpc_post(url, payload, timeout=90):
     return httpx.post(url, json=payload, timeout=timeout)
 
 
-def getlogs(params):
-    """getLogs with retry/fallback across public RPCs; raises after exhaustion."""
-    last = None
-    for i in range(6):
+def getlogs(params, method="eth_getLogs"):
+    """getLogs with refusal-aware failover across public RPCs.
+
+    Rotation rules:
+    - an endpoint that refuses the method (HTTP 403/404/405 or JSON-RPC
+      -32601) is dropped for the CURRENT call and the next endpoint is tried
+      immediately (no cooldown sleep — refusals rotate, they do not cool down);
+    - ordinary errors (rate limits, timeouts) rotate with a cooldown sleep;
+    - RuntimeError only after every endpoint in the pool has been exhausted.
+    """
+    refused = set()
+    order = list(RPCS)
+    last = "empty RPC pool"
+    attempts = 0
+    for _ in range(6):
+        if not order:
+            break
+        url = order[attempts % len(order)]
+        attempts += 1
         try:
-            r = rpc_post(RPCS[i % len(RPCS)], {"jsonrpc": "2.0", "id": 1,
-                                               "method": "eth_getLogs", "params": [params]})
-            if r.status_code == 200:
-                d = r.json()
-                if "result" in d:
-                    return d["result"]
-                last = f"rpcerr {str(d.get('error'))[:80]}"
-            else:
-                last = str(r.status_code)
+            r = rpc_post(url, {"jsonrpc": "2.0", "id": 1,
+                               "method": method, "params": [params]})
+            # A 403/404/405 proves the endpoint refuses this method right now
+            # regardless of body shape (HTML error pages included) — rotate.
+            if r.status_code in _CAPABILITY_HTTP_CODES:
+                refused.add(url)
+                order.remove(url)
+                continue
+            try:
+                body = r.json()
+            except Exception:
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            if r.status_code == 200 and "result" in body:
+                return body["result"]
+            err = body.get("error")
+            if isinstance(err, dict) and err.get("code") == -32601:
+                refused.add(url)
+                order.remove(url)
+                continue
+            last = str(r.status_code) if r.status_code != 200 else \
+                f"rpcerr {str(err)[:80]}"
         except Exception as e:
             last = str(e)[:80]
-        time.sleep(2 * (i + 1))
-    raise RuntimeError(f"getLogs failed: {last}")
+        time.sleep(2 * (attempts // max(1, len(order)) + 1))
+    raise RuntimeError(f"{method} failed: {last}")
 
 
 def latest_block():
