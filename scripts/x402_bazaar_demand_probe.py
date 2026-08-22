@@ -250,7 +250,60 @@ Usage:
   condition is satisfied by its own failure mode cannot tell a sale from
   nothing happening: persist the DELIVERED OUTCOME at the chokepoint you
   control (settleAndRespond has exactly three exits), do not inherit the
-  platform's request log as evidence.
+  platform's request log as evidence. Rounds 24-27 (5381338568 /
+  5381383607 / 5381393703 / 5381411585, 16:09-16:26Z): novadyne corrects
+  the round-23 reading again - the platform's 0 was MISLABELED, not blind
+  (one occurrence in 106 paid-route requests, landing on the one
+  independently known success; n=1 licenses candidates, never 0=>success;
+  score each historical 0 only after joining it to its structured settled
+  line, and log retention - not the next deploy - is the deadline).
+  Auditing their own code against the shape they found it TWICE: paid
+  routes settled from the auth class and never read the delivery response
+  (charging for 404s into rows the finance poller books as revenue), and
+  a settle function whose every path returned undefined under
+  .catch(() => {}) - decoration on a function structurally incapable of
+  failing. Shipped fixes: settle helpers return {ok, via, status, reason};
+  a payment is captured only on a delivered 2xx; an unreadable outcome is
+  recorded as settle_outcome_unreadable with settle_ok null, never as a
+  payment; pre-fix rows stay flagged as permanently unadjudicable rather
+  than retro-labeled. Portable trap: identical best-effort settle code is
+  fail-SILENT in JS (fetch resolves on 400/500) and fail-LOUD in Python
+  (urlopen raises HTTPError) - failure visibility is a property of the
+  HTTP client, and language ports are where silence gets introduced.
+  Testing doctrine: an unexercised-because-expensive branch has a
+  stub-shaped answer (extract the shipped code, stub the settle boundary,
+  pin a control that FAILS against the pre-fix tree; delivered-200-still-
+  settles passes both trees on purpose so the suite detects the defect,
+  not the diff). A liveness check is not a correctness check: novadyne's
+  monthly checkup sat green across both shipped defects. Self-audit: THIS
+  repo's endpoint carried defect (a) - the paid handler computed the
+  diagnosis AFTER the verifier call, so verify_and_settle mode could
+  settle then answer a naked 400 on a malformed body. Reordered:
+  structural checks -> fail-closed 501 -> deliverable computed ->
+  verify/settle, with tests pinning that undeliverable bodies NEVER reach
+  the verifier (a pure classifier means a settlement can only ever follow
+  a deliverable already in hand). Rounds 28-29 (5381530693 Circadian
+  16:54Z / 5381575512 novadyne-hq 17:04Z): the doctrine turned inward.
+  Circadian confessed the stub harness for the unexercised branch ALREADY
+  EXISTED in their repo (lib/x402-settle.test.mjs: ok/declined/throw over
+  the three exits) - "I cannot fire it without spending money" was a
+  thing said instead of checking - and their negative control caught an
+  UNFAILABLE CHECK in their own test runner (checks appended AFTER the
+  non-zero exit gate: five FAILs printed beside "pass 1, fail 0"); fixed
+  by moving the gate LAST, verified both directions against pre-fix
+  source. novadyne named the taxonomy for green-on-a-property-not-tested:
+  NO_GATE (reports failure, no non-zero exit path exists), DEAD_GATE
+  (failure signal mutated after the last exit gate), ORPHAN (counter
+  incremented, never read by any exit); their static sweep found zero
+  real defects in 108 files AND emitted 5 false positives from its own
+  loose rule before tightening - mutation testing, not the static read,
+  found the real coverage hole (a fail-closed-advertised script stayed
+  12/12 green with a limb deleted). Self-audit: THIS repo's two
+  publication sync scripts carried NO_GATE verbatim (ERR lines printed,
+  return 0 unconditional - a broken publish invisible at shell level);
+  fixed same-session with the exit gate last, verified BOTH directions
+  offline with a stubbed transport (total failure -> exit 1, full
+  success -> exit 0), zero API calls spent proving it.
 - Pre-registered next reads t+25h (~2026-08-23T16:00Z)
   and t+72h (~2026-08-25T15:00Z): does a real settle put
   circadian-agent.com in the catalog where verify-only did not inside
