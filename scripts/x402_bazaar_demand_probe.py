@@ -53,6 +53,20 @@ Usage:
   authorization is undecided, not verify-only; observed ~360s payer windows
   are library defaults, n=2). No public index row exposes `(payer, nonce)`
   yet, so this probe records the design rather than implementing it.
+- Round 7 (#3226 comment 5376906327 Circadian-agent): self-correction that
+  narrows the round-5/6 guarantee — decoding one of their own settled
+  payments shows an EIP-3009 authorization signs
+  (from, to, value, validAfter, validBefore, nonce) with NO resource
+  identifier. A consumed nonce therefore proves *a* payment to this payee
+  at this amount happened, not that THIS row was paid for: at one price
+  point any settled nonce "verifies" every same-price row the payee serves,
+  and copying a real consumed nonce into a fabricated row passes. Row-level
+  binding needs the facilitator to sign the row or the resource bound into
+  a payer-signed payload — named but undecided design space. Two more edges
+  kept explicit: unconsumed-and-expired cannot separate "facilitator tried,
+  verification failed" from "never tried" on chain, and a nonce consumed in
+  a later-reorged block reads true then false (the predicate's one
+  non-monotonic case).
 """
 import argparse
 import json
