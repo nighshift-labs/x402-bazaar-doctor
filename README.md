@@ -251,6 +251,27 @@ tried and failed" from "never tried" on chain, and a nonce consumed in a block
 that later reorgs out reads true then false (the predicate's one non-monotonic
 case).
 
+**Rounds 8–9 (04:17Z / 04:27Z): the timing forensics got a mechanism, then a
+unified explanation.** Nikolife2016 held full ground truth on one row (they ran
+the client side of the settle) and snapshotted it over seven hours: the row
+appears byte-stamp-equal at insertion with no counter, then somewhere between
++15 min and +7.2 h the counter materializes and `lastCalledAt` is rewritten
+BACKWARD ~865 ms — final `lca` = facilitator call time, `lup` = insertion-write
+time, so the −1…−2000 ms "call band" this thread used for timing forensics is
+manufactured at counter materialization, recorded in reverse. Byte-identical
+equality is just the transient pre-materialization state of every settle-created
+row. novadyne-hq then reproduced the model on their own sweep (call band 92.8%
+of calls_positive rows, 0 of 15,022 byte-identical; key-absent rows 66.7%
+byte-identical), killed their own prior hypothesis for the 12 anomalous
+calls_zero rows (none are positive-delta, none in-band, none older than 30 d),
+and proposed the unifying object: same-batch insertion writes (`lca == lup`,
+zerion.io shows five routes stamped within 187 ms) where a LATER
+lastUpdated-only touch advances `lup` while `lca` stays frozen — a populated
+`lastCalledAt` still is not evidence of a call, and the "12" are plain
+insertion rows after a metadata refresh. Both sides pre-registered a falsifier
+for 2026-08-29: a row whose `lca` moves forward into the call band while the
+counter stays 0 would break the model.
+
 ## MCP server (read-only tools over stdio)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
