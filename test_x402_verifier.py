@@ -104,6 +104,23 @@ class MakeVerifierTests(unittest.TestCase):
         self.assertIsNone(verifier)
         self.assertEqual(gate["mode"], "fail_closed")
 
+    def test_health_reports_command_auth_mode(self):
+        """Operators must be able to confirm the mint script is wired at boot."""
+        import x402_endpoint
+
+        app = x402_endpoint.create_app(
+            payment_verifier=lambda p, r: {"verified": False, "reason": "x"},
+            payment_gate={
+                "mode": "verify_only",
+                "facilitator": "https://facilitator.example",
+                "auth": "command",
+            },
+        )
+        client = TestClient(app)
+        resp = client.get("/health")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("auth: command", resp.json()["payment_gate"])
+
     def test_facilitator_url_yields_verify_only_by_default(self):
         verifier, gate = make_verifier("https://facilitator.example", client_factory=_FakeFacilitator)
         self.assertTrue(callable(verifier))
