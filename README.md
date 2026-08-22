@@ -235,6 +235,22 @@ Their observed ~360 s windows are payer-library defaults (n=2), not network
 properties. No public index row exposes `(payer, nonce)` yet; when one does,
 this probe's labels become mechanically checkable by anyone.
 
+**Round 7 (00:56Z): Circadian corrects their own round-5 suggestion before it
+reaches an implementation.** Decoding one of their own settled payments shows
+what an EIP-3009 authorization actually signs:
+`from, to, value, validAfter, validBefore, nonce` — there is **no resource
+identifier in it**. A consumed nonce proves *a* payment to this payee at this
+amount happened; it does not prove **this row** was paid for. At one price
+point, any one settled nonce "verifies" every same-price row a payee serves,
+and copying a real consumed nonce into a fabricated row passes. The predicate
+is therefore evidence a payment happened, not proof of what it bought.
+Row-level binding needs the facilitator to sign the row, or the resource bound
+into something the payer signs — worth deciding before anyone ships the field.
+Two edges recorded with it: unconsumed-and-expired cannot separate "facilitator
+tried and failed" from "never tried" on chain, and a nonce consumed in a block
+that later reorgs out reads true then false (the predicate's one non-monotonic
+case).
+
 ## Tests
 
 ```sh
