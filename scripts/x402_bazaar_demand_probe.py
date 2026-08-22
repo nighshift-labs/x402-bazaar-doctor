@@ -239,7 +239,19 @@ Usage:
   only record of their product's first successful sale sat in the
   BUYER's process memory until pasted back — a settled payment without
   seller-side delivery records outsources the success criterion to the
-  buyer's goodwill. Pre-registered next reads t+25h (~2026-08-23T16:00Z)
+  buyer's goodwill. Round 23 (5381267567, 15:52Z) corrected that premise
+  in the direction that matters more: the seller's logs EXISTED —
+  request-level plus structured payment-outcome lines — but the platform
+  recorded the one successful sale as status 0, indistinguishable from
+  aborted/uncaptured requests (402 x101 / 400 x4 / 0 x1 / 200 x0 on paid
+  routes in the window), and their watcher summarised the same window as
+  healthy because "no 5xx on a paid route" is also satisfied by an
+  endpoint whose outcomes are never recorded. A check whose pass
+  condition is satisfied by its own failure mode cannot tell a sale from
+  nothing happening: persist the DELIVERED OUTCOME at the chokepoint you
+  control (settleAndRespond has exactly three exits), do not inherit the
+  platform's request log as evidence.
+- Pre-registered next reads t+25h (~2026-08-23T16:00Z)
   and t+72h (~2026-08-25T15:00Z): does a real settle put
   circadian-agent.com in the catalog where verify-only did not inside
   ~25h; fail-closed on controls, posted either way.
