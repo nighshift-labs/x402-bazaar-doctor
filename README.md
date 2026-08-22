@@ -251,6 +251,44 @@ tried and failed" from "never tried" on chain, and a nonce consumed in a block
 that later reorgs out reads true then false (the predicate's one non-monotonic
 case).
 
+## MCP server (read-only tools over stdio)
+
+`x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
+agents can call the same measurement logic as tools. Six read-only tools:
+`probe_status` (provenance: SHA-256 of the wrapped probe script),
+`probe_validate` (instrument control), `bazaar_snapshot` (paginated index
+view; inline array or file path), `wallet_whois`, `wallet_scan`, and
+`wallet_never`.
+
+```sh
+# NOTE: mcp 2.x (landed after this server was written) REMOVED the
+# mcp.server.fastmcp module this server imports - keep the pin below 2.
+python3 -m pip install "mcp>=1.0,<2" httpx
+python3 x402_bazaar_probe_mcp.py        # stdio transport
+```
+
+Any MCP client works, e.g. Claude Desktop (`command: python3`,
+`args: ["/path/to/x402_bazaar_probe_mcp.py"]`) or
+`mcp-inspector python3 x402_bazaar_probe_mcp.py`.
+
+Boundaries and defaults (deliberately tighter than the CLI where a remote or
+agent caller is concerned):
+
+- **Read-only.** Public Base RPCs and the public CDP discovery index only;
+  no keys, no payment headers, no signing.
+- **Rate-limited.** Chain-touching tools allow 20 calls per process with at
+  least 5 s between calls; excess calls return structured errors.
+- **Bounded history by default.** `wallet_never` bounds its sweep at
+  7 days by default, so a fresh wallet reads `no_transfers_in_history_window`
+  instead of the stronger `never_received`; an explicit all-time request
+  (`history_days=null`) is capped at 30 days because a true block-0 sweep
+  would hold a rate slot for hours on Base - the response reports
+  `history_days_requested`, `history_days_applied`, and a note whenever the
+  cap fires.
+- **Contained output.** Per-wallet payer lists are capped at 20 entries; the
+  upstream script's stdout summaries are suppressed because stdout carries
+  the MCP stdio protocol.
+
 ## Tests
 
 ```sh
