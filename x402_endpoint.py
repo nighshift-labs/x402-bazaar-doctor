@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -246,9 +247,13 @@ async def diagnose_endpoint(request: Request):
 
 
 async def health(request: Request):
-    gate = getattr(request.app.state, "payment_gate", None)
-    if gate and gate.get("mode") != "fail_closed":
+    gate = getattr(request.app.state, "payment_gate", None) or {}
+    if gate.get("warning"):
+        payment_gate = f"fail-closed WARNING: {gate['warning']}"
+    elif gate and gate.get("mode") != "fail_closed":
         payment_gate = f"{gate['mode']} via {gate.get('facilitator', 'unknown')}"
+        if gate.get("auth"):
+            payment_gate += f" (auth: {gate['auth']})"
     else:
         payment_gate = "fail-closed until verifier wired"
     return JSONResponse(
@@ -271,17 +276,80 @@ async def sample(request: Request):
     )
 
 
-def create_app(payment_verifier=None, payment_gate=None) -> Starlette:
-    app = Starlette(
-        routes=[
-            Route("/diagnose", diagnose_endpoint, methods=["POST"]),
-            Route("/health", health, methods=["GET"]),
-            Route("/sample", sample, methods=["GET"]),
-        ]
+def _default_environ() -> dict:
+    """Real process environment, injectable in tests via ``environ=``."""
+    return os.environ
+
+
+def create_app(
+    payment_verifier=None,
+    payment_gate=None,
+    environ=None,
+    verifier_factory=None,
+) -> Starlette:
+    """Build the app.
+
+    Two wiring paths, deliberately hard to confuse:
+
+    - Programmatic (tests, ``__main__`` smoke): pass ``payment_verifier`` /
+      ``payment_gate`` directly. Environment is ignored.
+    - Production factory (uvicorn ``--factory`` passes NO arguments): wiring
+      comes from the environment ONLY when ``X402_WIRE_VERIFIER=1`` is set.
+      Without that flag the app boots fail-closed even when facilitator
+      variables are present — a misconfigured deploy must look broken
+      (501 + loud /health warning), never silently unpaid.
+      With the flag set, a missing facilitator config or a malformed auth
+      configuration RAISES at boot instead of serving 501s.
+    """
+    if environ is None and payment_verifier is None and payment_gate is None:
+        environ = _default_environ()
+
+    def _app(verifier, gate) -> Starlette:
+        app = Starlette(
+            routes=[
+                Route("/diagnose", diagnose_endpoint, methods=["POST"]),
+                Route("/health", health, methods=["GET"]),
+                Route("/sample", sample, methods=["GET"]),
+            ]
+        )
+        app.state.payment_verifier = verifier
+        app.state.payment_gate = gate
+        return app
+
+    if payment_verifier is not None or payment_gate is not None:
+        return _app(payment_verifier, payment_gate or {"mode": "fail_closed"})
+
+    wire_flag = str((environ.get("X402_WIRE_VERIFIER") or "").strip()).lower()
+    if wire_flag in ("1", "true", "yes"):
+        if verifier_factory is None:
+            from x402_verifier import verifier_from_env
+
+            verifier_factory = verifier_from_env
+        verifier, gate = verifier_factory(environ)
+        if verifier is None:
+            raise RuntimeError(
+                "X402_WIRE_VERIFIER=1 but no facilitator is configured; "
+                "refusing to boot a paywalled service that would answer every "
+                "paid retry with 501. Set X402_FACILITATOR_URL (plus "
+                "X402_FACILITATOR_HEADERS or X402_FACILITATOR_HEADERS_COMMAND)."
+            )
+        return _app(verifier, gate)
+
+    configured = any(
+        (environ.get(name) or "").strip()
+        for name in (
+            "X402_FACILITATOR_URL",
+            "X402_FACILITATOR_HEADERS",
+            "X402_FACILITATOR_HEADERS_COMMAND",
+        )
     )
-    app.state.payment_verifier = payment_verifier
-    app.state.payment_gate = payment_gate or {"mode": "fail_closed"}
-    return app
+    gate = {"mode": "fail_closed"}
+    if configured:
+        gate["warning"] = (
+            "facilitator env present but X402_WIRE_VERIFIER unset — paid "
+            "retries answer 501 payment_not_verified until X402_WIRE_VERIFIER=1"
+        )
+    return _app(None, gate)
 
 
 if __name__ == "__main__":  # manual smoke only; see deploy runbook for production
