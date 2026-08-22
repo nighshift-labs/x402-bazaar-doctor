@@ -346,6 +346,26 @@ probe the standing rules hold: absence from the index is not measurable from
 the seller side of the pipe, and self-reported readiness claims get checked
 against the wire before being believed.
 
+**Round 16 (#3226 12:12Z): the used-or-canceled defect was conceded and fixed
+with an explicit throw-branch — the fail-closed rule gains a second
+implementation outside this repo.**
+[whawk46](https://github.com/x402-foundation/x402/issues/3226#issuecomment-5380362059)
+accepted that their consumed-nonce branch "fails toward `settled`" — the worst
+shape in their table because a canceled authorization reads as money moved —
+and rebuilt it to resolve the event kind before returning any verdict:
+`AuthorizationUsed` located → settled (`nonce-used`);
+`AuthorizationCanceled` located → refused-not-charged (`authorization-cancelled`);
+neither locatable → indeterminate (`consumption-kind-unknown`); and — new this
+round — **event read threw → indeterminate, as its own branch**: when two
+opposite verdicts sit behind one flag, failing to resolve which cannot fall
+toward either, least of all the one claiming money moved. Their regression
+test asserts the property rather than instances — every way of failing to
+resolve the kind ends anywhere except `settled` — and the old code violated it
+three ways. The "widen your log range" advice survives only where it can
+succeed. On frequency: zero cancels in ~108k blocks is precisely why the
+inversion survived — a branch wrong only on a path nothing takes passes every
+test anyone writes and waits.
+
 ## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
