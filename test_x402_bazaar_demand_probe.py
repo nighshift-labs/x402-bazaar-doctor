@@ -504,5 +504,73 @@ class GetlogsFailoverTests(unittest.TestCase):
                              "endpoint instead of memoizing it as incapable")
 
 
+class LatestBlockFailoverTests(unittest.TestCase):
+    """latest_block must inherit the same refusal-aware failover as getlogs.
+
+    Residual member of the defect class fixed 2026-08-22 in getlogs: the old
+    latest_block pinned to RPCS[0] with raise_for_status(), so the SAME live
+    base.org behavior (403 under burst) killed every scan/never run before
+    rotation could engage. Contract mirrors GetlogsFailoverTests:
+    - capability refusals (HTTP 403/404/405, JSON-RPC -32601) rotate at once;
+    - ordinary errors (503, timeouts) rotate with cooldown sleeps;
+    - RuntimeError only when the whole pool is exhausted;
+    - success returns int(result, 16).
+    """
+
+    def _good(self, n=0x1234):
+        return {"jsonrpc": "2.0", "id": 1, "result": hex(n)}
+
+    def test_403_on_first_endpoint_rotates_to_next(self):
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        fake = _UrlRpc({a: (403, {}), b: (200, self._good())})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            self.assertEqual(probe.latest_block(), 0x1234)
+        self.assertEqual(fake.calls.count((a, "eth_blockNumber")), 1,
+                         "a refusing endpoint must be asked at most once per call")
+        self.assertGreaterEqual(fake.calls.count((b, "eth_blockNumber")), 1)
+
+    def test_jsonrpc_method_not_found_rotates_too(self):
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        nomethod = {"jsonrpc": "2.0", "id": 1,
+                    "error": {"code": -32601, "message": "method not found"}}
+        fake = _UrlRpc({a: (200, nomethod), b: (200, self._good(0x77))})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            self.assertEqual(probe.latest_block(), 0x77)
+        self.assertEqual(fake.calls.count((a, "eth_blockNumber")), 1)
+
+    def test_transient_503_rotates_without_raising(self):
+        # a rate-limits once (ordinary error, not a refusal); b serves.
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        fake = _UrlRpc({a: (503, {}), b: (200, self._good(0x99))})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            self.assertEqual(probe.latest_block(), 0x99)
+
+    def test_whole_pool_down_raises_runtimeerror_not_httpstatuserror(self):
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        fake = _UrlRpc({a: (503, {}), b: (503, {})})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            with self.assertRaises(RuntimeError):
+                probe.latest_block()
+
+    def test_single_pinned_endpoint_refusal_raises_immediately(self):
+        a = "https://rpc-a.example"
+        fake = _UrlRpc({a: (403, {})})
+        with patch.object(probe, "RPCS", [a]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            with self.assertRaises(RuntimeError):
+                probe.latest_block()
+        self.assertEqual(len(fake.calls), 1,
+                         "an all-refusing pool must not spin retries")
+
+
 if __name__ == "__main__":
     unittest.main()
