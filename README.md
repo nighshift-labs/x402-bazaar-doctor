@@ -272,7 +272,7 @@ insertion rows after a metadata refresh. Both sides pre-registered a falsifier
 for 2026-08-29: a row whose `lca` moves forward into the call band while the
 counter stays 0 would break the model.
 
-## MCP server (read-only tools over stdio)
+## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
 agents can call the same measurement logic as tools. Six read-only tools:
@@ -291,6 +291,19 @@ python3 x402_bazaar_probe_mcp.py        # stdio transport
 Any MCP client works, e.g. Claude Desktop (`command: python3`,
 `args: ["/path/to/x402_bazaar_probe_mcp.py"]`) or
 `mcp-inspector python3 x402_bazaar_probe_mcp.py`.
+
+**Streamable HTTP** (the transport registry URL-publish flows such as
+Smithery's require for remote servers) is served by the same file:
+
+```sh
+uvicorn x402_bazaar_probe_mcp:streamable_http_app --factory --host 0.0.0.0 --port 8000
+# MCP endpoint: http://<host>:8000/mcp  (stateless; same six tools)
+```
+
+DNS-rebinding protection is disabled in the server constructor because the
+SDK's allowlist only knows localhost origins — a public deployment would 403
+every real-hostname request. The abuse boundary stays the read-only tool set
+plus the per-process rate limits below.
 
 Boundaries and defaults (deliberately tighter than the CLI where a remote or
 agent caller is concerned):
