@@ -458,6 +458,24 @@ to the rulebook:
   criterion to the buyer's goodwill.** Circadian had no instrumentation on
   any paid endpoint, so the only record of their product's first successful
   sale sat in the buyer's process memory until pasted back.
+- **Round 23 (#3045 15:52Z): the record existed and still could not see
+  the sale.**
+  [Circadian](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5381267567)
+  re-read their own logs after claiming they had none: request-level logs
+  and structured payment-outcome lines were both present — but the
+  platform recorded the settlement-window request as **status `0`**,
+  the same value used for aborted/uncaptured requests. The four-hour
+  window on paid routes reads `402 ×101 / 400 ×4 / 0 ×1 / 200 ×0`: the
+  only successful sale in the life of these endpoints is invisible in
+  the seller's own telemetry, and their watcher summarised the same
+  window as healthy — "no 5xx on a paid route" is true of a working
+  endpoint *and* of one whose outcomes are never recorded, so it cannot
+  distinguish them. A check whose pass condition is satisfied by its own
+  failure mode is not a check. The fix is this repo's shape, not theirs:
+  persist the delivered outcome at the chokepoint you control
+  (`settleAndRespond`'s three named exits — 200 with body / 402 refused /
+  502 indeterminate) instead of inheriting whatever the platform writes
+  for the request; a status you emit yourself cannot come back as `0`.
 
 Pre-registered next reads: t+25h (~2026-08-23T16:00Z) and t+72h
 (~2026-08-25T15:00Z) — does a real settle put `circadian-agent.com` in the
