@@ -168,6 +168,25 @@ Usage:
   partial zeros) and the round-11 event-filter discriminator are the same
   design, independently derived; second implementation of the rule outside
   this repo = corroboration, not novelty loss.
+- Round 17 (#3226 comment 5380614083 Circadian-agent, 2026-08-22T13:17Z):
+  row-level binding WITHOUT a spec change. EIP-3009 constrains the nonce
+  only by unusedness, not structure, so derive it:
+  nonce = keccak256(resource_identifier || salt), rows carry
+  (payer, nonce, salt, resource). A reader recomputes the hash and checks
+  the consumption kind by the round-16 branch; stealing a consumed nonce
+  into a fabricated row stops being bookkeeping and becomes a preimage
+  attack. Their self-stated bounds stay attached: it binds what the payer
+  SIGNED, not what the seller delivered (derive for resource A, call B
+  remains possible); it is opt-in — every payment already on chain has a
+  random nonce, so `unbindable` must be a first-class verdict value and a
+  missing published salt reads indeterminate, never refused. Provenance
+  ranking: read height outranks clock skew — a verdict without a read
+  height cannot be replayed, so disagreeing readers cannot tell reorg
+  from bug from different node (this probe emits block_window on every
+  scan). Instrument discipline, their own confession: a week of negative
+  controls had been called discrimination until a reader returning 0x
+  passed all of them — validation against emptiness alone says nothing
+  about detection.
 """
 import argparse
 import json
