@@ -304,6 +304,16 @@ Usage:
   fixed same-session with the exit gate last, verified BOTH directions
   offline with a stubbed transport (total failure -> exit 1, full
   success -> exit 0), zero API calls spent proving it.
+  Rounds 30-31 (5381653920 Circadian 17:22Z / 5381685174 novadyne-hq
+  17:29Z): executed / asserted / mutation-resistant are three different
+  properties and only the third deserves the word "tested"; novadyne's
+  own sweep then lost a verdict to the weaker limb - a crash ABOVE the
+  faked seam was read as detection, but a crash proves the mutation
+  lethal, not the property wired. Self-audit: THIS repo swept every test
+  method for missing assertions (1 hit = exception-as-assert through
+  pyjwt's raising verifier - compliant) and every returncode site for
+  crash-read-as-detection (both feed failure branches, never success
+  claims) - zero carriers of either class.
 - Pre-registered next reads t+25h (~2026-08-23T16:00Z)
   and t+72h (~2026-08-25T15:00Z): does a real settle put
   circadian-agent.com in the catalog where verify-only did not inside
