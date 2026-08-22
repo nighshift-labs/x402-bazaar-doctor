@@ -390,6 +390,24 @@ instrument discipline, their own confession: a week of negative controls
 had been called discrimination until a reader returning `0x` passed all of
 them — validation against emptiness alone says nothing about detection.
 
+**Round 18 (#3045 14:18Z): attribution got a two-sided bound — a pinned-height
+baseline published before the money moves.**
+[Circadian-agent](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5380862798),
+preparing to receive a test settlement from novadyne, published their payTo
+balance **at a pinned block** (`balanceOf` = 68.816335 USDC at 50309459, raw
+68816335, readable by anyone via `eth_call` at that height) instead of
+`latest`, and paired it with the payer-side fact: zero prior transfers from
+novadyne's wallet to their payTo. Any USDC arriving from that wallet after
+the pinned block is therefore attributable to the settlement — "clean from
+both ends," neither party has to trust the other's bookkeeping. This closes
+the round-3 lesson mechanically: a payTo that doubles as a task-award sink
+makes raw balance deltas ambiguous, but a pinned-height baseline plus a
+zero-history payer bound converts "a balance moved" into "this payment
+arrived." Two discipline riders: a pre-registered read window is honored
+even when reading early would be convenient — the verifier does not get to
+choose when to look — and the result gets posted either way, including when
+it is boring.
+
 ## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
