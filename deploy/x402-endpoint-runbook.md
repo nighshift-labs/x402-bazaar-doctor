@@ -244,27 +244,60 @@ if not, surface A covers it explicitly.
 (`outreach/posts/2026-08-21-x402-endpoint-machine-path.txt`) with the real
 origin, and swap the offer page's "pending hosting" line for the live URL.
 
-**C.2 Agent-tool registries (rotation-prep, measured 2026-08-21T22:4xZ).**
+**C.2 Agent-tool registries (rotation-prep, measured 2026-08-21T22:4xZ;
+gate re-measured 2026-08-22T02:xxZ).**
 The MCP-directory class is live and carries a dense x402 trust-tooling cluster
-(direct comparables: ontario-protocol useCount 982, TrustBench 1029). Same
-hosting dependency as A — no new Halli decision, same origin unlocks it:
+(direct comparables: ontario-protocol useCount 982, TrustBench 1029).
 
-1. **Smithery** (primary): open `https://smithery.ai/new`, enter the public
-   HTTPS URL of the MCP wrapper, complete publishing (account flow = Halli
-   step, like hosting). Docs: `smithery.ai/docs/build/publish.md`
-   (LLM-friendly at `/docs/llms.txt`). Static server card fallback:
-   `/.well-known/mcp/server-card.json` if the scan can't auth.
+**Gate correction (2026-08-22, live re-measurement):** the class is NOT
+uniformly gated on the Halli hosting/account step. Smithery's URL-publish AND
+its `PUT /servers/{name}/releases` API both require an account/API key, and
+Glama's add flow is auth-walled — those two stay Halli-gated. But
+**mcpservers.org (Awesome MCP Servers) exposes a free submission form that
+takes a plain GitHub repo URL** (fields observed live: name, description,
+repo/homepage URL, category, contact email; hidden `plan=free`; $39 optional
+premium tier) — no hosting origin and no account required. Listing approval
+and the email field are the only unknowns; the email is a project-contact
+decision bundled into the existing Halli decision (b), not a new one.
+
+**The artifact side of the rotation is now BUILT and TESTED:**
+`tools/x402_bazaar_probe_mcp.py` — a read-only MCP server wrapping the demand
+probe as six tools (`probe_status` with upstream-hash provenance,
+`probe_validate`, `bazaar_snapshot`, `wallet_whois`, `wallet_scan`,
+`wallet_never`). Rate-limited (20 calls/process, ≥5 s apart on chain tools),
+history sweeps bounded by default (7 days; all-time requests capped at 30 d,
+cap reported in the response), stdout contained (it carries the
+stdio protocol). Audited by execution before publishing: tests **22/22**
+focused incl. a real stdio end-to-end session and a flat-layout regression;
+**462/462** full local suite; clean-room venv run verified against the
+README's `"mcp>=1.0,<2"` pin (mcp 2.x removed `mcp.server.fastmcp` - fresh
+installs of an unbounded pin would break); live smoke through a real client
+session against Base mainnet returned the honest bounded classification for
+the mission wallet, including the cap path. Publish set: MCP server +
+test + README section.
+
+1. **mcpservers.org (free, non-gated): submit the repo once the MCP server is
+   public.** Form fields pinned above; category fit: Development or Finance.
+   Requires decision-(b) project email. Verify listing lands; then it joins
+   the 08-28 measurement.
+2. **Smithery** (primary, account/Halli-gated): open `https://smithery.ai/new`,
+   enter the public HTTPS URL of the MCP wrapper, complete publishing.
+   Docs: `smithery.ai/docs/build/publish.md` (LLM-friendly at `/docs/llms.txt`).
+   Static server card fallback: `/.well-known/mcp/server-card.json`.
+   API alternative (needs API key): `PUT /servers/{qualifiedName}/releases`
+   (hosted JS-module, external-URL, or stdio-MCPB release types).
    Search API is public/no-auth (`registry.smithery.ai/servers?q=...`) —
    use it to verify listing lands and to read `useCount` on 08-28.
-2. **Glama** (secondary): add-server flow at `glama.ai/mcp/servers/add`;
-   public search API `glama.ai/api/mcp/v1/servers?query=...` for verification.
-3. Skip mcp.so ($39 paid listing), PulseMCP (submissions paused), OpenTools
-   (/submit 404) — measured dead ends, do not re-probe blind.
-4. Product shape: wrap the existing demand-probe subcommands
-   (`fetch-bazaar/scan/validate/whois/never`) as read-only MCP tools —
-   deterministic, keyless, already 99-tests-green upstream logic.
-5. Measure on 08-28 together with payment-path touches: x402-list pickup,
-   Smithery `useCount`, Glama presence.
+3. **Glama** (secondary, auth-walled): add-server flow at
+   `glama.ai/mcp/servers/add`; public search API
+   `glama.ai/api/mcp/v1/servers?query=...` for verification.
+4. Skip mcp.so ($39 paid listing), PulseMCP (now hard Cloudflare 403 on
+   /submit — upgraded from "paused"), OpenTools (/submit 404) — measured
+   dead ends, do not re-probe blind.
+5. Product shape executed: the existing demand-probe subcommands wrapped as
+   read-only MCP tools — deterministic, keyless, upstream logic untouched.
+6. Measure on 08-28 together with payment-path touches: x402-list pickup,
+   Smithery `useCount`, Glama presence, mcpservers.org listing state.
 
 ## Cost/price sanity
 
