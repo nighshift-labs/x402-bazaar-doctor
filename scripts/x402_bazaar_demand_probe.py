@@ -82,6 +82,21 @@ Usage:
   while its counter stays 0 breaks the model. For this probe: wallet-level
   reads stay valid, but any future timestamp-based inference must treat the
   call band as write-latency recorded in reverse, not as payment timing.
+- Round 10 (#3045 comments 5378908955 Circadian-agent / 5378967677 novadyne-hq;
+  #3226 comment 5378898430 whawk46): three refinements this probe inherits.
+  (1) Declaration drift is FASTER than the interval between two readers — one
+  host's accepts[].extra.facilitator moved PayAI → dexter → Coinbase CDP
+  across three reads in ~2 days — so any census classifying on live reads must
+  timestamp each read per row, not per sweep (this probe already stamps
+  measured_at_utc per output document; keep it that way). (2) Facilitator-
+  silence is the MAJORITY condition of admitted rows (novadyne-hq re-run:
+  14,071 of 15,091 = 93.24% declare no facilitator URL and are indexed
+  anyway) — a missing facilitator declaration can never be the explanation for
+  an absent row. (3) whawk46 conceded the round-7 narrowing on the record:
+  nonce consumption proves parties+amount, not row identity; their verdict
+  table keeps `rail-unreachable` as the branch that must return UNKNOWN, never
+  NO — the same fail-closed rule this probe applies to RPC errors (an
+  unreachable pool raises; it never fabricates a zero).
 """
 import argparse
 import json
@@ -168,8 +183,8 @@ def rpc_post(url, payload, timeout=90):
     return httpx.post(url, json=payload, timeout=timeout)
 
 
-def getlogs(params, method="eth_getLogs"):
-    """getLogs with refusal-aware failover across public RPCs.
+def _rotate_rpc(method, params):
+    """Refusal-aware failover across public RPCs (shared by getlogs/latest_block).
 
     Rotation rules:
     - an endpoint that refuses the method (HTTP 403/404/405 or JSON-RPC
@@ -189,7 +204,7 @@ def getlogs(params, method="eth_getLogs"):
         attempts += 1
         try:
             r = rpc_post(url, {"jsonrpc": "2.0", "id": 1,
-                               "method": method, "params": [params]})
+                               "method": method, "params": params})
             # A 403/404/405 proves the endpoint refuses this method right now
             # regardless of body shape (HTML error pages included) — rotate.
             if r.status_code in _CAPABILITY_HTTP_CODES:
@@ -217,10 +232,19 @@ def getlogs(params, method="eth_getLogs"):
     raise RuntimeError(f"{method} failed: {last}")
 
 
+def getlogs(params, method="eth_getLogs"):
+    """getLogs via the shared refusal-aware failover (_rotate_rpc)."""
+    return _rotate_rpc(method, [params])
+
+
 def latest_block():
-    r = rpc_post(RPCS[0], {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []})
-    r.raise_for_status()
-    return int(r.json()["result"], 16)
+    """Chain head via the shared failover — never pinned to a single endpoint.
+
+    Residual member of the getlogs defect class (fixed 2026-08-22): the old
+    version pinned RPCS[0] with raise_for_status(), so one endpoint's 403
+    killed every scan/never run before rotation could engage.
+    """
+    return int(_rotate_rpc("eth_blockNumber", []), 16)
 
 
 def fetch_bazaar(out_path):
