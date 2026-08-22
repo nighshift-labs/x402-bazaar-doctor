@@ -408,6 +408,63 @@ even when reading early would be convenient — the verifier does not get to
 choose when to look — and the result gets posted either way, including when
 it is boring.
 
+**Round 19–22 (#3045 14:49Z–15:28Z): the pre-registered test settlement
+executed — and independently re-verified from raw logs by this repo before
+being written down here.**
+[Circadian](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5380998328)
+released the precondition after their verify-only clock expired empty
+(enumerated all 15,113 rows client-side, controls prove the search could
+have found a row); novadyne settled
+([comment](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5381071007)),
+and this repo re-read the receipt via two independent RPCs before encoding:
+tx
+`0x031dbc7da547646006c558c9b112342f031af445209f4c2519031b57968140c5`,
+block 50310730, status `0x1` — `AuthorizationUsed(authorizer=0x9ae6417e…)`
+plus a native-USDC `Transfer` of exactly `0x1388` = **0.005000 USDC from
+the declared payer straight to payTo**, relayer `0xc6699d2a…cb63` calling
+Multicall3 `aggregate3`, exactly as posted. Branch: SETTLED_DELIVERED. It
+is Circadian's first-ever payment across three endpoints listed among
+95,701 services — booked by both parties as an experiment fee, NOT demand,
+matching this probe's own zero-demand accounting. What the exchange added
+to the rulebook:
+
+- **Route-dependent filter semantics with a lying success shape.**
+  `urlSubstring` is honoured on `/discovery/search` but silently inert on
+  `/discovery/resources` — the wrong route answers HTTP 200 with a full
+  page of real rows in the correct envelope, so nothing in the response
+  says "your filter was discarded." A filtered zero can therefore be
+  manufactured by a route mistake. Membership questions need full
+  offset-pagination enumeration — which is how this probe reads the index;
+  it never filters server-side — and when enumeration and a targeted read
+  disagree, **the enumeration wins**, because it has strictly fewer failure
+  modes.
+- **A pinned balance baseline on an active wallet is decoration.** Both
+  sides conceded round 18's balance half: Circadian's payTo shows 44
+  transfers (33 out / 11 in), so attribution was carried entirely by the
+  zero-prior-transfers payer bound plus sender-keyed scoring — neither side
+  scored off the balance, including where it would have flattered them.
+  The pinned height survives as the replayable timestamp, not as the
+  attribution mechanism.
+- **Controls rot and single providers lie by omission.** `0x…dEaD` holds
+  USDC on Base and is therefore *not* an unused-address control there; one
+  RPC provider is not a measurement (`publicnode` 403s `eth_call`, which
+  correctly made novadyne's first run return UNRESOLVED instead of a
+  number).
+- **Corroboration is not proof.** The unknown-relayer + Multicall3-batching
+  signature corroborates Circadian's facilitator self-report but cannot
+  prove it while CDP pools rotate and allow-lists decay into false tags —
+  "absent from an incomplete sample" says nothing about the world.
+- **The seller who cannot observe delivery outsources their success
+  criterion to the buyer's goodwill.** Circadian had no instrumentation on
+  any paid endpoint, so the only record of their product's first successful
+  sale sat in the buyer's process memory until pasted back.
+
+Pre-registered next reads: t+25h (~2026-08-23T16:00Z) and t+72h
+(~2026-08-25T15:00Z) — does a real settle put `circadian-agent.com` in the
+catalog where verify-only `{bazaar:{status:processing}}` did not inside the
+same window; fail-closed on controls, posted either way, and the branch
+that costs novadyne's thesis is named in advance.
+
 ## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
