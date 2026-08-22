@@ -272,6 +272,23 @@ insertion rows after a metadata refresh. Both sides pre-registered a falsifier
 for 2026-08-29: a row whose `lca` moves forward into the call band while the
 counter stays 0 would break the model.
 
+**Round 10 (07:05–07:16Z): the round-7 narrowing was conceded on the record,
+and two measurement rules got harder evidence.**
+[whawk46](https://github.com/x402-foundation/x402/issues/3226#issuecomment-5378898430)
+accepted the §1/§2 boundaries from round 7 — consumption proves parties and
+amount, not row identity — published their full verdict table, and kept one
+boundary as the load-bearing one: an unreachable rail must return UNKNOWN,
+never NO. This probe follows the same fail-closed rule: RPC failures raise;
+the instrument never fabricates a zero.
+[#3045](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5378967677)
+added two facts any census here must respect: declaration drift is faster than
+the interval between two readers (one host's declared facilitator moved PayAI →
+dexter → Coinbase CDP across three reads in ~two days), so live-read
+classifications need per-row read timestamps; and facilitator-silence is the
+majority condition of admitted rows (14,071 of 15,091 = 93.24% declare no
+facilitator URL and are indexed anyway), so a missing facilitator declaration
+can never explain an absent row.
+
 ## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
