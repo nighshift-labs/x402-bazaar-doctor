@@ -12,7 +12,11 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
   `eip155:8453`, Circle USDC `0x8335…2913`, `payTo` = mission receive-only
   wallet, amount `50000` = $0.50), advertises itself via the Bazaar discovery
   extension, and **fails closed** without a wired verifier (paid retry →
-  `501 payment_not_verified`, nothing charged).
+  `501 payment_not_verified`, nothing charged). The bare uvicorn
+  `create_app --factory` entrypoint wires the verifier from the environment
+  ONLY when `X402_WIRE_VERIFIER=1` is set — without it the deploy boots
+  fail-closed even with facilitator vars present (`/health` carries a loud
+  WARNING); with it, missing/malformed facilitator config aborts boot.
 - `tools/x402_verifier.py` — **the real verifier, now implemented.** Delegates
   EIP-3009 signature/balance/nonce checks to the official `x402` package's
   HTTP facilitator client. Env-activated:
@@ -28,8 +32,8 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
     transaction hash. Default is verify-only; auto-settle is an owner call.
   - `/health` reports the active gate (`fail-closed` / `verify_only via …` /
     `verify_and_settle via …`).
-- `tools/test_x402_endpoint.py` (14 tests) + `tools/test_x402_verifier.py`
-  (28 tests) — all passing; full tools suite 388/388 (verified with the
+- `tools/test_x402_endpoint.py` (19 tests) + `tools/test_x402_verifier.py`
+  (28 tests) — all passing; full tools suite 440/440 (verified with the
   official `x402==2.20.0` package installed AND without it).
 - Live smoke on 127.0.0.1:8787 with the verifier active against the real
   x402.org facilitator: `/health` 200 showing `verify_only via
@@ -62,8 +66,11 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
    1. Create account at render.com (accept ToS — Halli step).
    2. New → Web Service → connect GitHub repo `nighshift-labs/x402-bazaar-doctor`
       (root directory). Runtime: Python 3.
-      **Build command:** `pip install "x402[all]" starlette uvicorn`
-      (the repo ships no requirements.txt — set this explicitly).
+      **Build command:** `pip install -r requirements.txt`
+      (pinned install set: `x402[all]`, starlette, uvicorn, plus pyjwt and
+      cryptography for the CDP mint script — pyjwt/cryptography happen to be
+      transitive deps of `x402[all]` today, but a payment path does not run
+      on transitive luck).
       **Start command:**
       `uvicorn x402_endpoint:create_app --factory --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'`
       (**verified live 23:1xZ**: the app is a factory — `create_app`, not a
@@ -84,7 +91,13 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
       clients, one click to Starter ($7/mo, always-on) — decide on evidence,
       not anticipation.
    4. Add the CDP + verifier env vars from the wiring block below as Render
-      environment variables (mark secrets). Deploy.
+      environment variables (mark secrets). **`X402_WIRE_VERIFIER=1` is
+      REQUIRED** — the bare uvicorn `--factory` call passes no arguments, so
+      without that explicit flag the app deliberately boots fail-closed even
+      with every facilitator var set (a misconfigured deploy must look broken:
+      501 + a WARNING line on `/health`, never silently unpaid). With the flag
+      set and the facilitator config missing/malformed, boot ABORTS instead of
+      serving 501s. Deploy.
    5. Hand the worker the origin URL (e.g. `https://x402-bazaar-doctor.onrender.com`)
       — worker runs the `/supported` pre-flight, live smoke, directory
       submissions, and announcements.
@@ -105,21 +118,23 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
    Concrete CDP wiring (what "paste the keys" means once created):
 
    ```bash
-   # 1. Drop the ready-made mint script on the host (deploy/mint_cdp_jwt.py
-   #    in this repo — tested: 17 unit tests + subprocess e2e + wire-level
-   #    proof against the official x402 client's auth provider). It reads
-   #    the CDP key pair from env and prints the grouped auth-header JSON
-   #    the verifier expects, fresh per request. Host needs only:
+   # 1. The mint script SHIPS IN THE PUBLIC REPO at deploy/mint_cdp_jwt.py
+   #    (synced with the rest of the deploy set — verified present in the
+   #    repo tree; tested: 17 unit tests + subprocess e2e + wire-level proof
+   #    against the official x402 client's auth provider). It reads the CDP
+   #    key pair from env and prints the grouped auth-header JSON the
+   #    verifier expects, fresh per request. Host needs only:
    #    pip install pyjwt cryptography      (no cdp-sdk required)
    #
    # 2. Wire the verifier to it (env, not code):
+   #    X402_WIRE_VERIFIER=1                (REQUIRED — see click-list step 4)
    export CDP_API_KEY_ID='<apiKeyId from the CDP console>'
    export CDP_API_KEY_SECRET='<base64 secret from the CDP console>'
    export X402_FACILITATOR_URL=https://api.cdp.coinbase.com/platform/v2/x402
-   export X402_FACILITATOR_HEADERS_COMMAND='["python3", "/srv/mint_cdp_jwt.py"]'
+   export X402_FACILITATOR_HEADERS_COMMAND='["python3", "deploy/mint_cdp_jwt.py"]'
 
    # 3. Pre-flight on the host before going live:
-   python3 /srv/mint_cdp_jwt.py --check     # mints + signature-verifies all
+   python3 deploy/mint_cdp_jwt.py --check   # mints + signature-verifies all
                                             # three route tokens to stderr;
                                             # exits nonzero on any problem
    ```
@@ -160,14 +175,17 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
 
 1. Push the repo (already public) and point the platform at
    `tools/x402_endpoint.py` (uvicorn entrypoint, `PORT` env respected).
-2. Install deps: `pip install "x402[all]" starlette uvicorn`.
-3. Set env: `X402_FACILITATOR_URL=<facilitator base URL>`, then either
-   `X402_FACILITATOR_HEADERS=<static JSON>` (static-key facilitators) or
-   `X402_FACILITATOR_HEADERS_COMMAND=<JSON argv>` (per-request mint, e.g.
-   CDP — see the wiring block above), and only if Halli opts in:
-   `X402_AUTO_SETTLE=1`. Check `GET /health` reports the expected gate.
-4. Re-run the test suites (70 x402-focused tests in the mission repo:
-   endpoint 14 + verifier 28 + classifier 28; full tools suite is 388) and
+2. Install deps: `pip install -r requirements.txt`.
+3. Set env: `X402_WIRE_VERIFIER=1` (**required** for the bare uvicorn factory
+   to read the facilitator config at all — without it the app boots
+   fail-closed by design), `X402_FACILITATOR_URL=<facilitator base URL>`,
+   then either `X402_FACILITATOR_HEADERS=<static JSON>` (static-key
+   facilitators) or `X402_FACILITATOR_HEADERS_COMMAND=<JSON argv>`
+   (per-request mint, e.g. CDP — see the wiring block above), and only if
+   Halli opts in: `X402_AUTO_SETTLE=1`. Check `GET /health` reports the
+   expected gate (`fail-closed WARNING: …` means the flag is missing).
+4. Re-run the test suites (75 x402-focused tests in the mission repo:
+   endpoint 19 + verifier 28 + classifier 28; full tools suite is 440) and
    one live $0.50 self-test call.
 5. Directory + Bazaar submission, Nostr announcement, and offer-page link
    updates — all worker-executable; see the next section.
