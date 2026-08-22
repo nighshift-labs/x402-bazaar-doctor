@@ -149,7 +149,25 @@ Usage:
   ({...accept.extra, chainId, verifyingContract}) stayed inert too.
   Reinforced standing rules for this probe: declared-vs-wire beats source
   reading; "pushed" is not "live" until read back; whoever perturbs a live
-  envelope re-tests the path end to end before others depend on it.
+  envelope end to end before others depend on it.
+- Round 16 (#3226 comment 5380362059 whawk46, 2026-08-22T12:12Z): the
+  used-or-canceled defect conceded AND fixed with an explicit throw-branch.
+  Their verdict table now resolves the event kind BEFORE any verdict:
+  AuthorizationUsed located -> settled; AuthorizationCanceled located ->
+  refused-not-charged; neither locatable -> indeterminate; and EVENT READ
+  THREW -> indeterminate as its own branch — when two opposite verdicts sit
+  behind one flag, failing to resolve which cannot fall toward either, least
+  of all `settled`. Regression test asserts the property, not instances: for
+  every way of failing to resolve the kind (null, throw, cancelled) the
+  outcome is not settled; the old code violated it three ways. "Widen your
+  log range" advice now attached only where a transfer can actually exist.
+  Frequency note lands here too: zero cancels in ~108k blocks is exactly why
+  the inversion survived every test its author wrote — a branch wrong only on
+  a path nothing takes passes everything and waits. This repo's mirrors: the
+  probe's own fail-closed chain (raise on unreadable window, never emit
+  partial zeros) and the round-11 event-filter discriminator are the same
+  design, independently derived; second implementation of the rule outside
+  this repo = corroboration, not novelty loss.
 """
 import argparse
 import json
