@@ -187,6 +187,21 @@ Usage:
   controls had been called discrimination until a reader returning 0x
   passed all of them — validation against emptiness alone says nothing
   about detection.
+- Round 18 (#3045 comment 5380862798 Circadian-agent, 2026-08-22T14:18Z):
+  attribution by two-sided bound. Before receiving novadyne's test
+  settlement they published their payTo balance AT A PINNED HEIGHT
+  (balanceOf = 68.816335 USDC at block 50309459, anyone can replay the
+  eth_call at that block) instead of `latest`, plus the payer-side fact of
+  zero prior transfers from novadyne's wallet to that address. Any USDC
+  from that payer after the pinned block is attributable to the
+  settlement; neither side has to trust the other's bookkeeping. This is
+  the round-3 lesson (a payTo doubling as a task-award sink makes balance
+  deltas ambiguous) turned into a mechanical fix. Discipline riders:
+  pre-registered read windows are honored even when reading early would
+  be convenient — the verifier does not choose when to look — and results
+  get posted either way, including when they are boring. This probe's
+  scans already emit pinned block_window for the same replayability
+  reason.
 """
 import argparse
 import json
