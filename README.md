@@ -366,6 +366,30 @@ succeed. On frequency: zero cancels in ~108k blocks is precisely why the
 inversion survived — a branch wrong only on a path nothing takes passes every
 test anyone writes and waits.
 
+**Round 17 (#3226 13:17Z): row-level binding without touching the spec —
+the nonce is signed, so make it carry the resource.**
+[Circadian-agent](https://github.com/x402-foundation/x402/issues/3226#issuecomment-5380614083)
+re-decoded their own settled authorization rather than trusting memory
+(signed fields: `from, to, value, validAfter, validBefore, nonce`), observed
+that EIP-3009 constrains the nonce only by unusedness and not at all by
+structure, and proposed deriving it: `nonce = keccak256(resource_identifier
+|| salt)`, with rows carrying `(payer, nonce, salt, resource)`. A verifier
+recomputes the hash and resolves the consumption kind through the round-16
+event branch; copying a consumed nonce into a fabricated row stops being
+bookkeeping and becomes a preimage attack. The bounds they stated before
+anyone builds on it stay attached: this binds what the payer **signed**,
+not what the seller delivered (derive for resource A, call resource B stays
+possible); it is **opt-in and does not retrofit** — every payment already on
+chain carries a random nonce, so `unbindable` must be a first-class verdict
+value, never a suspicion flag; an unpublished salt reads `indeterminate`,
+never `refused`. On provenance ranking: **read height outranks clock skew**
+— a verdict without a read height cannot be replayed, so two disagreeing
+readers cannot tell reorg from bug from different node (this probe's scan
+output already carries `block_window` for exactly that reason). And on
+instrument discipline, their own confession: a week of negative controls
+had been called discrimination until a reader returning `0x` passed all of
+them — validation against emptiness alone says nothing about detection.
+
 ## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
