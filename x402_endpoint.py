@@ -208,6 +208,26 @@ async def diagnose_endpoint(request: Request):
             headers={"PAYMENT-RESPONSE": _b64(_settlement(False, "verifier_not_configured"))},
         )
 
+    # Deliverable BEFORE money: the classifier is pure, so compute the report
+    # first. A paid request whose body cannot yield a diagnosis is refused 400
+    # with no verifier call — in verify_and_settle mode the verifier settles,
+    # and settling before delivery is known is the exact defect class #3045
+    # rounds 24-27 caught in novadyne's own code (charging for undelivered
+    # 404s). A settlement can only ever follow a deliverable already in hand.
+    try:
+        raw = await request.body()
+        data = json.loads(raw) if raw else {}
+        observation = data["observation"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return JSONResponse({"error": "invalid_observation"}, status_code=400)
+
+    try:
+        report = diagnose(observation)
+    except (TypeError, ValueError) as exc:
+        return JSONResponse(
+            {"error": "invalid_observation", "detail": str(exc)}, status_code=400
+        )
+
     try:
         verdict = verifier(payload, _payment_requirements())
     except Exception as exc:  # verifier crash must never look like a valid payment
@@ -225,20 +245,6 @@ async def diagnose_endpoint(request: Request):
         )
 
     payer = verdict.get("payer")
-    try:
-        raw = await request.body()
-        data = json.loads(raw) if raw else {}
-        observation = data["observation"]
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return JSONResponse({"error": "invalid_observation"}, status_code=400)
-
-    try:
-        report = diagnose(observation)
-    except (TypeError, ValueError) as exc:
-        return JSONResponse(
-            {"error": "invalid_observation", "detail": str(exc)}, status_code=400
-        )
-
     report["payer"] = payer
     return JSONResponse(
         report,
