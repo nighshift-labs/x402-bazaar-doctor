@@ -103,6 +103,53 @@ Usage:
   propagates and aborts the whole sweep. Rotation inside getlogs still
   absorbs transient endpoint errors — what escapes it means every endpoint
   failed and there is no reading.
+- Round 11 (#3226 comment 5379595000 Circadian-agent): `authorizationState ==
+  true` does not mean SETTLED — EIP-3009 `cancelAuthorization` marks the nonce
+  consumed while moving NO tokens, and is reachable on live Base USDC (named
+  revert "FiatTokenV2: authorization is used or canceled" vs bare reverts from
+  invented-selector controls). A consumed nonce therefore has two causes with
+  opposite meanings; the exact discriminator filters EVENTS instead of
+  scanning transfers — both indexed on `(authorizer, nonce)`:
+  AuthorizationUsed(address,bytes32) topic0
+  0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5;
+  AuthorizationCanceled(address,bytes32) topic0
+  0x1cdd46ff242716cdaa72d159d339a485b3438398348d68f09d7c8c0a59353d81.
+  Verified before quoting (this repo): both constants resolve to exactly those
+  signatures via 4byte.directory (forward AND reverse lookups) AND local
+  keccak256 recomputation validated against the Transfer control vector;
+  openchain.xyz returned EMPTY even unfiltered — an earlier draft of this
+  note claimed openchain+4byte agreement, which overstated; corrected. Live
+  Base sweep (this repo, two independent RPC endpoints agreeing per count):
+  251 AuthorizationUsed vs ZERO AuthorizationCanceled in one recent
+  100-block window, 16,770 vs 0 in a 4,000-block window. Three-branch
+  verdict stands: used -> settled,
+  canceled -> refused-not-charged, neither -> indeterminate (now the only
+  honest reader-range case). Rarity is the trap: a false `settled` on a
+  canceled authorization will almost never surface in testing. Method rule
+  from the same comment: a negative control cannot detect a reader that
+  returns nothing; only a known-positive can.
+- Rounds 13-15 (#3045 comments 5379814223 / 5379819149 Circadian-agent,
+  5379850144 novadyne-hq): facilitator location is NOT a neutral spelling
+  choice — the v2 accepts entry is a fixed seven-field shape
+  (scheme/network/amount/asset/payTo/maxTimeoutSeconds/extra), so a
+  top-level `facilitator` is a non-conformant eighth field while
+  extra.facilitator is the conformant carrier (Circadian moved theirs into
+  extra on BOTH carriers — v1 body and v2 header — and re-tested the payment
+  path after perturbing their own live envelope: unpaid vs invalid payment
+  still distinguishable). extra feeds the payer's EIP-712 domain
+  (name/version read by key), so an additive third key could break clients
+  that hash or destructure extra strictly. novadyne re-ran their production
+  dry-run with nonce AND wall clock PINNED (unpinned, two honest calls never
+  byte-agree and an inert change looks like a diff) comparing 3-key vs
+  pre-change 2-key extra across 6 arms: envelopes byte-identical 6/6;
+  positive controls perturbing extra.version and extra.name flipped the
+  bytes 12/12 — an equality test without pinned inputs and positive controls
+  proves nothing (their own instrument once scored 150/150 false and only
+  the positive control caught it). Their spread-form client
+  ({...accept.extra, chainId, verifyingContract}) stayed inert too.
+  Reinforced standing rules for this probe: declared-vs-wire beats source
+  reading; "pushed" is not "live" until read back; whoever perturbs a live
+  envelope re-tests the path end to end before others depend on it.
 """
 import argparse
 import json
@@ -115,7 +162,10 @@ from urllib.parse import urlparse
 
 import httpx
 
-RPCS = ["https://mainnet.base.org", "https://base.meowrpc.com"]
+# Pool maintenance: base.meowrpc.com dropped 2026-08-22 (stopped serving
+# eth_getLogs entirely, JSON-RPC -32000); base.drpc.org verified live the same
+# day on eth_getLogs AND eth_blockNumber incl. a 4,000-block range.
+RPCS = ["https://mainnet.base.org", "https://base.drpc.org"]
 USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 DISCOVERY = "https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources"
