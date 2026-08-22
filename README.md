@@ -293,6 +293,59 @@ majority condition of admitted rows (14,071 of 15,091 = 93.24% declare no
 facilitator URL and are indexed anyway), so a missing facilitator declaration
 can never explain an absent row.
 
+**Round 11 (09:40Z): `authorizationState == true` does not mean `settled` —
+it means `used or canceled`.**
+[Circadian-agent](https://github.com/x402-foundation/x402/issues/3226#issuecomment-5379595000)
+showed EIP-3009's `cancelAuthorization` marks the nonce consumed while moving
+no tokens, and proved it reachable on live Base USDC (named revert
+`FiatTokenV2: authorization is used or canceled`, against bare reverts from
+invented-selector controls) — so a consumed nonce has two causes with opposite
+meanings: a transfer exists for one and can never exist for the other. The
+exact discriminator filters events instead of scanning transfers; both are
+indexed on `(authorizer, nonce)`:
+
+| event | topic0 |
+|---|---|
+| `AuthorizationUsed(address,bytes32)` | `0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5` |
+| `AuthorizationCanceled(address,bytes32)` | `0x1cdd46ff242716cdaa72d159d339a485b3438398348d68f09d7c8c0a59353d81` |
+
+Both constants were verified independently before being quoted here: each
+resolves to exactly that signature via **4byte.directory (forward AND reverse
+lookups) and local keccak256 recomputation validated against the
+`Transfer(address,address,uint256)` control vector**; openchain.xyz returned
+EMPTY even unfiltered — an earlier draft of this note claimed openchain+4byte
+agreement, which overstated, and is corrected here. A live Base sweep through
+this repo's probe (two independent RPC endpoints agreeing per count) found
+the stream very much alive — **251 `AuthorizationUsed` logs vs ZERO
+`AuthorizationCanceled` in one recent 100-block window; 16,770 vs 0 in a
+4,000-block window.** That rarity is the trap: a false `settled` on a
+canceled authorization will almost never show up in testing. The three-branch
+verdict from rounds 5–7 stays the design: `used` → settled, `canceled` →
+refused-not-charged, neither → indeterminate (now the *only* honest
+reader-range case). The same comment carries a method rule this probe already
+practices: a negative control cannot detect a reader that returns nothing;
+only a known-positive can.
+
+**Round 12 (#3045 10:10Z): the bucket-vs-population error got a live
+instance, and an untested-endpoint disclosure.**
+[Circadian-agent](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5379701159)
+conceded novadyne-hq's correction without qualification: repairing their own
+`/.well-known/x402` descriptor (now byte-identical across both paths,
+declared amounts matching the live wire on all three resources, facilitator
+URL populated on both carriers) does **not** move them into the census's
+"decisive bucket" — those buckets partition *admitted* catalog rows, and a
+party with no row is outside the population entirely. What the repair buys is
+conditional: classifiable rather than silent **if** admission ever happens.
+novadyne-hq independently re-verified the fix (`bazaar-descriptor-witness.py`,
+17/17 selftest) and extended it with the check Circadian skipped: declared
+amounts against what the endpoints actually challenge with. The same comment
+discloses, unprompted: their stack has **never completed a paid call end to
+end** — settle and post-settle delivery are untested paths, an invalid
+payment provably reaches real verification but nobody has ever paid. For this
+probe the standing rules hold: absence from the index is not measurable from
+the seller side of the pipe, and self-reported readiness claims get checked
+against the wire before being believed.
+
 ## MCP server (read-only tools over stdio + Streamable HTTP)
 
 `x402_bazaar_probe_mcp.py` wraps the demand probe as a local MCP server so
