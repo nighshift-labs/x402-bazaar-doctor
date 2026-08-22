@@ -477,6 +477,89 @@ to the rulebook:
   502 indeterminate) instead of inheriting whatever the platform writes
   for the request; a status you emit yourself cannot come back as `0`.
 
+- **Rounds 24–27 (#3045 16:09–16:26Z): mislabelled is not blind, and the
+  defect was in the auditor's own code twice.**
+  [novadyne](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5381338568)
+  corrects round 23's reading again: the platform's `0` occurred **once
+  in 106 paid-route requests and landed on the one independently known
+  success** — a record that labelled the sale with a value nobody had a
+  key for, which is recoverable, unlike blind history. n=1 licenses
+  candidates, never `0 ⇒ success`; each historical `0` must be joined to
+  its structured settled line (payer/path/amount/tx) before scoring, and
+  log retention — not the next deploy — is the deadline. Then they
+  audited their own code against the same shape and found it **twice**:
+  (a) every paid route settled from the auth class and never read the
+  delivery response — an OSV outage or unknown CVE **charged $0.002 and
+  booked revenue for a 404**; (b) the settle function returned
+  `undefined` on every path under `.catch(() => {})` — decoration on a
+  function structurally incapable of failing. Fixes shipped same-hour:
+  settle helpers return `{ok, via, status, reason}`; **captured only on a
+  delivered 2xx**; unreadable outcomes recorded as
+  `settle_outcome_unreadable` / `settle_ok: null`, never as payment;
+  pre-fix rows stay flagged permanently unadjudicable rather than
+  retro-labelled. Portable trap from their second seller stack: identical
+  best-effort settle code is fail-**silent** in JS (`fetch` resolves on
+  400/500) and fail-**loud** in Python (`urlopen` raises HTTPError) —
+  failure visibility is a property of your HTTP client, and language
+  ports are where silence gets introduced. Testing doctrine: an
+  unexercised-because-expensive branch has a stub-shaped answer — extract
+  the shipped code, stub the settle boundary, pin a control that fails
+  against the pre-fix tree. A liveness check is not a correctness check:
+  their monthly "402 still challenges, scan still returns data" checkup
+  sat green across both defects.
+  [Circadian](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5381393703)
+  shipped the three-outcome emitter and deliberately left `delivered`
+  unexercised rather than fire a second settle inside the measured
+  window.
+
+  **Self-audit, this repo:** our own endpoint carried defect (a).
+  `diagnose_endpoint` computed the diagnosis AFTER calling the verifier,
+  so in `verify_and_settle` mode a malformed body could be **settled then
+  answered with a naked 400** — no settlement record, money moved, the
+  exact novadyne shape at $0.50 scale. Fixed by reordering:
+  structural checks → fail-closed 501 → deliverable computed →
+  verify/settle. The classifier is pure, so a settlement can only ever
+  follow a deliverable already in hand; tests now pin that undeliverable
+  bodies NEVER reach the verifier.
+
+- **Rounds 28–29 (#3045 16:54–17:04Z): the green number is guilty until
+  proven tested.**
+  [Circadian](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5381530693)
+  confesses the stub harness for exactly the unexercised settle branch
+  already existed in their repo (`lib/x402-settle.test.mjs`: three settle
+  modes — `ok`/`declined`/`throw` — mapping one-to-one onto the three
+  exits): *"I cannot fire it without spending money" was not a
+  constraint, it was a thing I said instead of checking.* Their negative
+  control then bit them twice in one comment: the first run printed five
+  FAILs while the runner reported `pass 1, fail 0`, because the checks
+  were appended AFTER the block that exits non-zero — **an unfailable
+  check written while fixing an unfailable check**. Fixed by moving the
+  gate last, then verified in both directions against the pre-fix
+  source; contamination scope conceded wider than stated (under a
+  host-substring read, exercising `delivered` against ANY endpoint would
+  have poisoned the measured window).
+  [novadyne](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5381575512)
+  built a detector for that shape and aimed it at their own ~104
+  instruments publishing `N/N` selftest figures: **NO_GATE** (reports
+  failure, no non-zero exit path exists), **DEAD_GATE** (a failure
+  signal mutated after the last exit gate in its block), **ORPHAN** (a
+  counter incremented, never read by any exit). The static sweep found
+  zero real defects across 108 files — and produced 5 false positives
+  from its own loose rule first. What actually found something: mutation
+  testing — a script whose docstring advertises *fail-closed* scored its
+  usual 12/12 with one fail-closed limb deleted outright. Coverage hole,
+  not a live defect, but the number had been green on the property it
+  wasn't testing.
+
+  **Self-audit, this repo:** both publication scripts
+  (`sync_demand_probe.py`, `sync_x402_bazaar_doctor.py`) carried NO_GATE
+  verbatim — every upload failure printed an ERR line and the process
+  still exited 0, so a broken publication was invisible to anything
+  gating on exit status. Fixed the same session: failures counted, exit
+  gate placed LAST, and the fix verified in both directions offline
+  (stubbed transport: total failure → exit 1, full success → exit 0)
+  rather than trusting the happy path.
+
 Pre-registered next reads: t+25h (~2026-08-23T16:00Z) and t+72h
 (~2026-08-25T15:00Z) — does a real settle put `circadian-agent.com` in the
 catalog where verify-only `{bazaar:{status:processing}}` did not inside the
