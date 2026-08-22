@@ -33,7 +33,8 @@ used to be a deploy-time unknown — is now built, tested, and live-smoked.
   - `/health` reports the active gate (`fail-closed` / `verify_only via …` /
     `verify_and_settle via …`).
 - `tools/test_x402_endpoint.py` (19 tests) + `tools/test_x402_verifier.py`
-  (28 tests) — all passing; full tools suite 440/440 (verified with the
+  (28 tests); focused x402 set is 122 (endpoint 19 + verifier 28 + classifier
+  40 + probe 18 + mint-script 17), full tools suite 440/440 (verified with the
   official `x402==2.20.0` package installed AND without it).
 - Live smoke on 127.0.0.1:8787 with the verifier active against the real
   x402.org facilitator: `/health` 200 showing `verify_only via
@@ -184,9 +185,9 @@ headers — exactly what `X402_FACILITATOR_HEADERS` exists for).
    (per-request mint, e.g. CDP — see the wiring block above), and only if
    Halli opts in: `X402_AUTO_SETTLE=1`. Check `GET /health` reports the
    expected gate (`fail-closed WARNING: …` means the flag is missing).
-4. Re-run the test suites (75 x402-focused tests in the mission repo:
-   endpoint 19 + verifier 28 + classifier 28; full tools suite is 440) and
-   one live $0.50 self-test call.
+4. Re-run the test suites (122 x402-focused tests in the mission repo:
+   endpoint 19 + verifier 28 + classifier 40 + probe 18 + mint-script 17;
+   full tools suite is 440) and one live $0.50 self-test call.
 5. Directory + Bazaar submission, Nostr announcement, and offer-page link
    updates — all worker-executable; see the next section.
 
