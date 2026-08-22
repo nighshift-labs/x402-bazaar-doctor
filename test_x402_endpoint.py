@@ -212,6 +212,50 @@ class PaidRequestTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"], "invalid_observation")
 
+    def test_undeliverable_body_never_reaches_verifier(self):
+        """A paid-header request whose body cannot yield a diagnosis must be
+        refused 400 BEFORE any money moves: the verifier (which settles in
+        verify_and_settle mode) is never called. #3045 rounds 24-27: novadyne
+        charged $0.002 for 404s because settle ran before delivery was known;
+        this endpoint's classifier is pure, so the deliverable can be computed
+        first and a settlement can only ever follow a deliverable in hand."""
+        calls = []
+
+        def fake_verifier(payload, requirements):
+            calls.append(payload)
+            return {"verified": True, "payer": "0xabc0000000000000000000000000000000000001"}
+
+        app = create_app(payment_verifier=fake_verifier)
+        client = TestClient(app)
+        resp = client.post(
+            "/diagnose",
+            json={"observation": {"payment_scheme_version": 9}},
+            headers=_paid_headers(),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"], "invalid_observation")
+        self.assertEqual(calls, [])
+
+    def test_missing_observation_key_never_reaches_verifier(self):
+        """Same rule for the missing-key branch: no verifier call, no
+        settlement record on any undeliverable request."""
+        calls = []
+
+        def fake_verifier(payload, requirements):
+            calls.append(payload)
+            return {"verified": True, "payer": "0xabc0000000000000000000000000000000000001"}
+
+        app = create_app(payment_verifier=fake_verifier)
+        client = TestClient(app)
+        resp = client.post(
+            "/diagnose",
+            json={"wrong_key": {}},
+            headers=_paid_headers(),
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["error"], "invalid_observation")
+        self.assertEqual(calls, [])
+
 
 class FactoryEnvWiringTests(unittest.TestCase):
     """The documented production entrypoint is a bare uvicorn factory call
