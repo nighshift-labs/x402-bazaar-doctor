@@ -21,9 +21,13 @@ import io
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
+
+import uvicorn
 
 HERE = Path(__file__).resolve().parent
 
@@ -396,6 +400,56 @@ class StdioEndToEnd(unittest.TestCase):
                     self.assertTrue(payload["read_only"])
 
         asyncio.run(asyncio.wait_for(run(), timeout=60))
+
+
+class StreamableHttpEndToEnd(unittest.TestCase):
+    """Streamable HTTP surface: ASGI app serves the same six tools."""
+
+    def test_asgi_app_initialize_list_call(self):
+        mod = _load()
+        app = mod.streamable_http_app()
+        self.assertTrue(callable(app))
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        async def run():
+            async with streamablehttp_client(
+                    "http://127.0.0.1:8931/mcp") as (rd, wr, _):
+                async with ClientSession(rd, wr) as sess:
+                    await sess.initialize()
+                    tools = (await sess.list_tools()).tools
+                    self.assertTrue(EXPECTED_TOOLS <=
+                                    {t.name for t in tools})
+                    res = await sess.call_tool("probe_status", {})
+                    payload = json.loads(res.content[0].text)
+                    self.assertTrue(payload["read_only"])
+
+        config = uvicorn.Config(app, host="127.0.0.1", port=8931,
+                                log_level="error", lifespan="on")
+        server = uvicorn.Server(config)
+        # Plain thread, not get_event_loop().run_in_executor: after prior
+        # async tests ran, 3.11 has no current event loop in MainThread and
+        # the deprecated getter raises. server.run() manages its own loop.
+        task = threading.Thread(target=server.run, daemon=True)
+        task.start()
+
+        deadline = time.time() + 30
+        while not server.started and time.time() < deadline:
+            time.sleep(0.05)
+        try:
+            asyncio.run(asyncio.wait_for(run(), timeout=60))
+        finally:
+            server.should_exit = True
+            end = time.time() + 15
+            while task.is_alive() and time.time() < end:
+                time.sleep(0.05)
+            if task.is_alive():
+                # Streamable-HTTP shutdown can outwait a lingering SSE GET
+                # stream under load; force-exit rather than hang the suite.
+                server.should_exit = True
+                server.force_exit = True
+                task.join(10)
+            self.assertFalse(task.is_alive(), "uvicorn did not shut down")
 
 
 if __name__ == "__main__":
