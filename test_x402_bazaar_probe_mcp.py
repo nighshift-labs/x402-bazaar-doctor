@@ -26,7 +26,23 @@ from pathlib import Path
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = HERE / "x402_bazaar_probe_mcp.py"
+
+
+def _script_path():
+    """Locate the MCP wrapper across layouts.
+
+    Monorepo keeps wrapper+test together in tools/; the published repo
+    installs the test at root and the wrapper under scripts/.
+    """
+    for cand in (HERE / "x402_bazaar_probe_mcp.py",
+                 HERE / "scripts" / "x402_bazaar_probe_mcp.py"):
+        if cand.exists():
+            return cand
+    raise SystemExit(
+        f"x402_bazaar_probe_mcp.py not found near {HERE}")
+
+
+SCRIPT = _script_path()
 
 EXPECTED_TOOLS = {
     "probe_status",
@@ -109,9 +125,8 @@ class ProbeMCPTestCase(unittest.TestCase):
         self.assertEqual(set(out["tools"]), EXPECTED_TOOLS)
 
     def test_upstream_probe_hash_matches_disk(self):
-        want = hashlib.sha256(
-            (HERE.parent / "scripts" / "x402_bazaar_demand_probe.py")
-            .read_bytes()).hexdigest()
+        # Derive the upstream from the loaded module - no hardcoded layout.
+        want = hashlib.sha256(self.mod.UPSTREAM.read_bytes()).hexdigest()
         out = json.loads(self._call("probe_status", {}))
         self.assertEqual(out["upstream_sha256"], want)
 
@@ -122,8 +137,7 @@ class ProbeMCPTestCase(unittest.TestCase):
         flat = HERE / ".flat_layout_regression"
         try:
             (flat / "scripts").mkdir(parents=True)
-            probe_src = (HERE.parent / "scripts"
-                         / "x402_bazaar_demand_probe.py").read_bytes()
+            probe_src = self.mod.UPSTREAM.read_bytes()
             (flat / "scripts" / "x402_bazaar_demand_probe.py").write_bytes(
                 probe_src)
             (flat / "scripts" / "x402_bazaar_probe_mcp.py").write_bytes(
