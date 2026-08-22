@@ -213,6 +213,82 @@ class PaidRequestTests(unittest.TestCase):
         self.assertEqual(resp.json()["error"], "invalid_observation")
 
 
+class FactoryEnvWiringTests(unittest.TestCase):
+    """The documented production entrypoint is a bare uvicorn factory call
+    (``uvicorn x402_endpoint:create_app --factory``), which passes no
+    arguments. Production wiring must therefore come from the environment —
+    but only when the operator explicitly enables it, so the default deploy
+    can never silently serve paid 501s."""
+
+    def test_bare_factory_stays_fail_closed(self):
+        app = create_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/diagnose", json={"observation": V1_OBSERVATION}, headers=_paid_headers()
+        )
+        self.assertEqual(resp.status_code, 501)
+        self.assertEqual(resp.json()["error"], "payment_not_verified")
+        self.assertEqual(app.state.payment_gate["mode"], "fail_closed")
+
+    def test_explicit_flag_wires_env_verifier(self):
+        seen = {}
+
+        def fake_verifier(payload, requirements):
+            return {"verified": True, "payer": "0xabc0000000000000000000000000000000000001"}
+
+        def factory(environ):
+            seen["environ"] = environ
+            return (
+                fake_verifier,
+                {"mode": "verify_only", "facilitator": "https://facilitator.example"},
+            )
+
+        app = create_app(
+            environ={
+                "X402_WIRE_VERIFIER": "1",
+                "X402_FACILITATOR_URL": "https://facilitator.example",
+            },
+            verifier_factory=factory,
+        )
+        self.assertIs(app.state.payment_verifier, fake_verifier)
+        self.assertEqual(seen["environ"]["X402_WIRE_VERIFIER"], "1")
+        client = TestClient(app)
+        resp = client.post(
+            "/diagnose", json={"observation": V1_OBSERVATION}, headers=_paid_headers()
+        )
+        self.assertEqual(resp.status_code, 200)
+        health = client.get("/health").json()
+        self.assertIn("verify_only", health["payment_gate"])
+
+    def test_env_configured_but_unwired_warns_and_stays_fail_closed(self):
+        app = create_app(
+            environ={"X402_FACILITATOR_URL": "https://facilitator.example"}
+        )
+        self.assertEqual(app.state.payment_gate["mode"], "fail_closed")
+        self.assertIn("X402_WIRE_VERIFIER", app.state.payment_gate.get("warning", ""))
+        client = TestClient(app)
+        health = client.get("/health").json()
+        self.assertIn("X402_WIRE_VERIFIER", health["payment_gate"])
+        resp = client.post(
+            "/diagnose", json={"observation": V1_OBSERVATION}, headers=_paid_headers()
+        )
+        self.assertEqual(resp.status_code, 501)
+
+    def test_enabled_flag_with_broken_auth_config_aborts_boot(self):
+        with self.assertRaises(ValueError):
+            create_app(
+                environ={
+                    "X402_WIRE_VERIFIER": "1",
+                    "X402_FACILITATOR_URL": "https://facilitator.example",
+                    "X402_FACILITATOR_HEADERS_COMMAND": "[not json",
+                }
+            )
+
+    def test_enabled_flag_with_nothing_to_wire_raises(self):
+        with self.assertRaises(RuntimeError):
+            create_app(environ={"X402_WIRE_VERIFIER": "1"})
+
+
 class FreeSurfaceTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(create_app())
