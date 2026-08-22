@@ -333,5 +333,176 @@ class NeverReceivedTests(unittest.TestCase):
             self.assertIn(_pad_addr(PAYTO_A), p["topics"][2])
 
 
+class _UrlRpc:
+    """rpc_post stand-in whose canned answer depends on the endpoint URL."""
+
+    def __init__(self, per_url):
+        self.per_url = per_url          # url -> (status_code, body_dict)
+        self.calls = []                 # [(url, method)]
+
+    def __call__(self, url, payload, timeout=90):
+        self.calls.append((url, payload["method"]))
+        status, body = self.per_url[url]
+
+        class R:
+            def json(self_inner):
+                return body
+
+        r = R()
+        r.status_code = status
+        return r
+
+
+class GetlogsFailoverTests(unittest.TestCase):
+    """Refusal-aware failover for getlogs (2026-08-22, BACKLOG item 8).
+
+    Observed live: a pooled Base RPC 403s eth_getLogs under burst and serves
+    the identical query minutes later; blind round-robin also burned half its
+    retry budget on refusals with cooldown sleeps. Contract:
+    - an endpoint refusing eth_getLogs (HTTP 403/404/405 or JSON-RPC -32601)
+      is dropped for the CURRENT call only — never memoized across calls;
+    - refusals rotate immediately without the cooldown sleep;
+    - RuntimeError only when every endpoint in the pool is exhausted.
+    """
+
+    GOOD = {"jsonrpc": "2.0", "id": 1, "result": []}
+
+    def _params(self):
+        return {"address": probe.USDC,
+                "topics": [TRANSFER, None, [_pad_addr(PAYTO_A)]],
+                "fromBlock": "0x0", "toBlock": "0x10"}
+
+    def test_http_403_marks_endpoint_incapable_and_skips_it(self):
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        fake = _UrlRpc({a: (403, {"error": "forbidden"}), b: (200, self.GOOD)})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            logs = probe.getlogs(self._params())
+        self.assertEqual(logs, [])
+        self.assertEqual(fake.calls.count((a, "eth_getLogs")), 1,
+                         "a refusing endpoint must be asked at most once per call")
+        self.assertGreaterEqual(fake.calls.count((b, "eth_getLogs")), 1)
+
+    def test_jsonrpc_method_not_found_also_marks_incapable(self):
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        nomethod = {"jsonrpc": "2.0", "id": 1,
+                    "error": {"code": -32601, "message": "method not found"}}
+        fake = _UrlRpc({a: (200, nomethod), b: (200, self.GOOD)})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            self.assertEqual(probe.getlogs(self._params()), [])
+        self.assertEqual(fake.calls.count((a, "eth_getLogs")), 1)
+
+    def test_failover_rotates_to_next_endpoint_without_cooldown_sleep(self):
+        # a is getLogs-incapable (403); b rate-limits twice (503) then recovers.
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        seq = {"n": 0}
+
+        def b_answer():
+            seq["n"] += 1
+            if seq["n"] <= 2:
+                return (503, {})
+            return (200, self.GOOD)
+
+        class SeqUrlRpc(_UrlRpc):
+            def __call__(self, url, payload, timeout=90):
+                self.calls.append((url, payload["method"]))
+                if url == a:
+                    status, body = 403, {}
+                else:
+                    status, body = b_answer()
+
+                class R:
+                    def json(self_inner):
+                        return body
+
+                r = R()
+                r.status_code = status
+                return r
+
+        slept = []
+        fake = SeqUrlRpc({a: (403, {}), b: None})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: slept.append(s)):
+            self.assertEqual(probe.getlogs(self._params()), [])
+        self.assertEqual(fake.calls.count((a, "eth_getLogs")), 1)
+        self.assertEqual(seq["n"], 3)
+        # Cooldown applies only to same-endpoint transient errors (the two 503s),
+        # never to a capability failover.
+        self.assertEqual(len(slept), 2)
+
+    def test_all_endpoints_unusable_still_raises_runtimeerror(self):
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        err = {"jsonrpc": "2.0", "id": 1,
+               "error": {"code": -32005, "message": "limit exceeded"}}
+        fake = _UrlRpc({a: (200, err), b: (500, {})})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            with self.assertRaises(RuntimeError):
+                probe.getlogs(self._params())
+
+    def test_single_incapable_endpoint_pool_raises_immediately(self):
+        a = "https://rpc-a.example"
+        fake = _UrlRpc({a: (403, {})})
+        with patch.object(probe, "RPCS", [a]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            with self.assertRaises(RuntimeError):
+                probe.getlogs(self._params())
+        self.assertEqual(len(fake.calls), 1,
+                         "an all-incapable pool must not spin retries")
+
+    def test_happy_path_contacts_only_the_first_capable_endpoint(self):
+        a = "https://rpc-a.example"
+        fake = _UrlRpc({a: (200, self.GOOD)})
+        with patch.object(probe, "RPCS", [a, "https://rpc-b.example"]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            self.assertEqual(probe.getlogs(self._params()), [])
+        self.assertEqual(fake.calls, [(a, "eth_getLogs")])
+
+    def test_refusal_is_not_memoized_across_calls(self):
+        # Live finding (2026-08-22): a pooled Base RPC 403s eth_getLogs under
+        # burst and serves the identical query minutes later. A refusal must
+        # therefore poison only the current call — the NEXT call starts fresh
+        # and may use the endpoint again.
+        a, b = "https://rpc-a.example", "https://rpc-b.example"
+        state = {"burst": True}
+        good = self.GOOD
+
+        class BurstyRpc(_UrlRpc):
+            def __call__(self, url, payload, timeout=90):
+                self.calls.append((url, payload["method"]))
+                status, body = ((403, {}) if (url == a and state["burst"])
+                                else (200, good))
+
+                class R:
+                    def json(self_inner):
+                        return body
+
+                r = R()
+                r.status_code = status
+                return r
+
+        fake = BurstyRpc({})
+        with patch.object(probe, "RPCS", [a, b]), \
+             patch.object(probe, "rpc_post", fake), \
+             patch.object(probe.time, "sleep", lambda s: None):
+            # During the burst: a refuses once, b serves.
+            self.assertEqual(probe.getlogs(self._params()), [])
+            burst_calls_a = fake.calls.count((a, "eth_getLogs"))
+            self.assertEqual(burst_calls_a, 1)
+            # After the burst clears: a is asked again and serves.
+            state["burst"] = False
+            self.assertEqual(probe.getlogs(self._params()), [])
+            self.assertEqual(fake.calls[-1], (a, "eth_getLogs"),
+                             "next call must retry the previously-refusing "
+                             "endpoint instead of memoizing it as incapable")
+
+
 if __name__ == "__main__":
     unittest.main()
