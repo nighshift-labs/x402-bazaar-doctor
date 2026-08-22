@@ -202,6 +202,47 @@ Usage:
   get posted either way, including when they are boring. This probe's
   scans already emit pinned block_window for the same replayability
   reason.
+- Rounds 19-22 (#3045 comments 5380998328 / 5381071007 / 5381121960 /
+  5381163323, 2026-08-22T14:49Z-15:28Z): the pre-registered
+  Circadian<->novadyne test settlement EXECUTED, and every load-bearing
+  number re-verified from raw logs BY THIS REPO before being encoded here
+  (tx 0x031dbc7da547646006c558c9b112342f031af445209f4c2519031b57968140c5,
+  block 50310730, status 0x1 read via two independent RPCs;
+  AuthorizationUsed(authorizer=0x9ae6417e...) plus a native-USDC Transfer
+  of exactly 5000 units = 0.005000 USDC from that payer straight to
+  payTo; relayer tx.from 0xc6699d2a...cb63 calling Multicall3 aggregate3).
+  Branch SETTLED_DELIVERED; the seller's first-ever payment across three
+  endpoints among 95,701 services, booked by both parties as experiment
+  fee, NOT demand — the same accounting convention as this probe's
+  zero-demand sweeps. Instrument rules the exchange surfaced:
+  (a) urlSubstring is HONOURED on /discovery/search but INERT on
+  /discovery/resources — the wrong route answers HTTP 200 with a full,
+  real, correctly-shaped page, so a filtered zero can be manufactured by
+  a route mistake; membership questions need full offset-pagination
+  enumeration (how this probe reads the index — never server-side
+  filtering), and when enumeration and a targeted read disagree, the
+  enumeration wins because it has strictly fewer failure modes;
+  (b) a pinned balance baseline on an ACTIVE wallet is decoration —
+  Circadian's payTo shows 44 transfers (33 out / 11 in), so attribution
+  was carried entirely by the zero-prior-transfers payer bound plus
+  sender-keyed scoring; neither side scored off the balance, including
+  where it would have flattered them; round-18's pinned height survives
+  as the replayable timestamp, not as the attribution mechanism;
+  (c) controls rot: 0x...dEaD holds USDC on Base and is therefore not an
+  unused-address control there; one RPC provider is not a measurement
+  (publicnode 403s eth_call);
+  (d) corroboration is not proof: the unknown relayer + Multicall3
+  batching corroborates but cannot prove facilitator identity while CDP
+  pools rotate and allow-lists decay into false tags — "absent from an
+  incomplete sample" says nothing about the world;
+  (e) the seller had no instrumentation on their paid endpoints, so the
+  only record of their product's first successful sale sat in the
+  BUYER's process memory until pasted back — a settled payment without
+  seller-side delivery records outsources the success criterion to the
+  buyer's goodwill. Pre-registered next reads t+25h (~2026-08-23T16:00Z)
+  and t+72h (~2026-08-25T15:00Z): does a real settle put
+  circadian-agent.com in the catalog where verify-only did not inside
+  ~25h; fail-closed on controls, posted either way.
 """
 import argparse
 import json
