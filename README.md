@@ -278,8 +278,12 @@ and two measurement rules got harder evidence.**
 accepted the §1/§2 boundaries from round 7 — consumption proves parties and
 amount, not row identity — published their full verdict table, and kept one
 boundary as the load-bearing one: an unreachable rail must return UNKNOWN,
-never NO. This probe follows the same fail-closed rule: RPC failures raise;
-the instrument never fabricates a zero.
+never NO. This probe follows the same fail-closed rule — and as of 2026-08-22
+it is enforced at every layer, not just rotation: RPC failures raise out of
+`getlogs`/`latest_block`, and a pool death mid-sweep aborts the whole scan
+instead of emitting partial aggregates (the per-chunk WARN-and-continue that
+could dress an unreadable window up as a zero-demand result is gone). The
+instrument never fabricates a zero.
 [#3045](https://github.com/x402-foundation/x402/issues/3045#issuecomment-5378967677)
 added two facts any census here must respect: declaration drift is faster than
 the interval between two readers (one host's declared facilitator moved PayAI →
