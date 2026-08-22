@@ -67,6 +67,21 @@ Usage:
   verification failed" from "never tried" on chain, and a nonce consumed in
   a later-reorged block reads true then false (the predicate's one
   non-monotonic case).
+- Rounds 8–9 (#3045 comments 5377827193 Nikolife2016 / 5377864669 novadyne-hq):
+  the −1…−2000 ms "call band" is manufactured at COUNTER MATERIALIZATION, not
+  written at settle time. Ground-truth witness on one row (payer-side held):
+  insertion shows lca == lup (byte-identical) with no counter key; hours later
+  the counter lands and lastCalledAt is rewritten BACKWARD to the facilitator
+  call time while lastUpdated stays at the insertion write — so a populated
+  lastCalledAt still is not evidence of a call, and byte-identical equality is
+  merely the transient pre-materialization state of settle-created rows.
+  novadyne-hq's unified model for anomalous calls_zero rows: same-batch
+  insertion writes (five zerion.io routes stamped within 187 ms) where a later
+  lastUpdated-only touch advances lup while lca freezes; pre-registered
+  falsifier (2026-08-29): any row whose lca moves FORWARD into the call band
+  while its counter stays 0 breaks the model. For this probe: wallet-level
+  reads stay valid, but any future timestamp-based inference must treat the
+  call band as write-latency recorded in reverse, not as payment timing.
 """
 import argparse
 import json
