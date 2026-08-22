@@ -96,7 +96,13 @@ Usage:
   nonce consumption proves parties+amount, not row identity; their verdict
   table keeps `rail-unreachable` as the branch that must return UNKNOWN, never
   NO — the same fail-closed rule this probe applies to RPC errors (an
-  unreachable pool raises; it never fabricates a zero).
+  unreachable pool raises; it never fabricates a zero). ENFORCED at every
+  layer as of 2026-08-22: _scan_window used to catch pool-exhaustion
+  exceptions per chunk-group and continue, letting a mid-scan RPC death emit
+  partial aggregates indistinguishable from a zero-demand result; it now
+  propagates and aborts the whole sweep. Rotation inside getlogs still
+  absorbs transient endpoint errors — what escapes it means every endpoint
+  failed and there is no reading.
 """
 import argparse
 import json
@@ -394,13 +400,17 @@ def _scan_window(paytos, lo, hi):
             # the USDC contract, with recipients selected via Transfer topics[2].
             # (2026-08-21 lesson: address=<seller wallets> returns empty for any
             # market and fabricates a "zero demand" result.)
+            # Fail closed (2026-08-22): an unreachable RPC pool raises out of
+            # getlogs and aborts the WHOLE sweep. This loop used to catch the
+            # error, print a WARN, and continue — so a mid-scan pool death
+            # emitted partial aggregates indistinguishable from a legitimate
+            # zero-demand measurement, the exact fabrication the round-10
+            # fail-closed rule (#3226 comment 5378898430) forbids. Rotation
+            # inside getlogs already absorbs transient endpoint errors; what
+            # escapes it means every endpoint failed and there is no reading.
             topics = [TRANSFER_TOPIC, None, ["0x" + "0" * 24 + a.lower().lstrip("0x").rjust(40, "0") for a in grp]]
-            try:
-                logs = getlogs({"address": USDC, "topics": topics,
-                                "fromBlock": hex(cur), "toBlock": hex(top)})
-            except Exception as e:
-                print(f"WARN group@{cur}-{top} idx{gi}: {e}", file=sys.stderr)
-                continue
+            logs = getlogs({"address": USDC, "topics": topics,
+                            "fromBlock": hex(cur), "toBlock": hex(top)})
             for lg in logs:
                 to = "0x" + lg["topics"][2][-40:].lower()
                 hits[to] += 1
