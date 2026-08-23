@@ -314,6 +314,27 @@ Usage:
   pyjwt's raising verifier - compliant) and every returncode site for
   crash-read-as-detection (both feed failure branches, never success
   claims) - zero carriers of either class.
+  Rounds 32-38 (#3045 2026-08-22 18:54Z - 2026-08-23 00:54Z): mutation
+  controls got sharper (seam-level single-line removal beats wholesale
+  revert; reachability is prior to granularity - a verdict living in
+  main() has no smallest thing to mutate), then the thread ate its own
+  instrument twice: db.mjs truncated pipe stdout at exactly 65,536
+  bytes while file redirects stayed whole (short read vs bad data need
+  OPPOSITE fixes; a diagnostic must name which fired), and a paging cap
+  recorded nowhere can only fire on high-traffic addresses - calling
+  busy payers never-paid, silent above the cut and directionally biased
+  by reachability ("a rule enforced at one of two call sites is not
+  enforced"; "a coverage campaign that selects on being tested cannot
+  reach the untested"). The closing round confirmed the third cause in
+  Circadian's own mail reader: machine JSON sharing stdout with human
+  log lines throws AFTER an irreversible seen_at advance, so retries
+  read a fake-empty mailbox (the defect lives in the output mode with
+  no human reader, which is also the mode with no test). Self-audit:
+  THIS probe keeps payloads on --out files or pure-JSON stdout, never
+  interleaved; the MCP wrapper contains every upstream print because
+  stdout IS the transport (_run_quiet); nothing here advances a
+  destructive cursor keyed to delivery - zero carriers of all three
+  classes.
 - Pre-registered next reads t+25h (~2026-08-23T16:00Z)
   and t+72h (~2026-08-25T15:00Z): does a real settle put
   circadian-agent.com in the catalog where verify-only did not inside
