@@ -163,7 +163,7 @@ python3 scripts/x402_bazaar_demand_probe.py never --hours 24 --history-days 30 0
 
 Pipeline: paginate the public CDP discovery index, extract every declared
 `accepts[].payTo`, then `eth_getLogs` on Base mainnet native-USDC
-`Transfer(topic0)` filtered `to=<payTo>` (10k-block chunks, ≤400 addresses per
+`Transfer(topic0)` filtered `to=<payTo>` (10k-block chunks, ≤100 addresses per
 filter, retry/fallback across public RPCs). Aggregates payments, USDC volume,
 and distinct payers per seller wallet. A `validate` subcommand runs the
 instrument control: the USDC contract itself emits thousands of Transfers per
@@ -177,7 +177,8 @@ for addresses with known transfers).
 
 First run (2026-08-21): 15,147 resources / 1,606 hosts / 1,225 seller wallets —
 **zero incoming transfers** for top-host wallets over 7 days and for the whole
-universe over 24 hours. Combined with the verify-vs-settle provenance question
+universe over 24 hours *(this zero is corrected by the erratum below)*. Combined
+with the verify-vs-settle provenance question
 ([x402-foundation/x402#3226](https://github.com/x402-foundation/x402/issues/3226)),
 catalog counters should be read as claims, not receipts.
 
@@ -197,6 +198,32 @@ two payers; **zero endpoint settlements**. Wallet-level reads cannot attribute
 inflows to endpoints. A real instance of settled-but-not-indexed needs a
 settlement matching a specific resource's advertised price and timing, with no
 row — which is exactly what `/diagnose` classifies per-resource.
+
+## Erratum (2026-08-24): the 08-21 "zero incoming" was an instrument zero, not a network zero
+
+**What happened:** the 2026-08-21 scan behind the claim above reported zero
+incoming transfers across the whole universe over 24 hours. A seller (kopko13)
+published a counterexample
+([x402-foundation/x402#3226](https://github.com/x402-foundation/x402/issues/3226),
+comment `5397982118`): their `payTo` received **27 settlements / 0.584 USDC**
+inside exactly that window. Re-verified first-hand from raw logs — their anchor
+tx settles on-chain (status 1, block 50254673 = 2026-08-21T07:51:33Z) and the
+single-wallet control over our pinned original window (50228256..50271456)
+returns exactly **27 transfers / 0.584 USDC**. They were right. The most likely
+mechanism is that the scan predates the scanner's fail-closed fix (a mid-sweep
+RPC death then emitted partial aggregates indistinguishable from zero); the
+exact failure mode of the 08-21 run is not recoverable from records.
+
+**Corrected measurement (re-scan executed 2026-08-25 over the same pinned
+window, fresh discovery-index pull, current fail-closed scanner with per-chunk
+known-positive controls and exact-match per-wallet verification):
+329 of 1142 seller wallets received incoming USDC — 428010 transfers /
+26723.905766 USDC total**, kopko13's wallet included. Machine-readable full result
+(every wallet, every payer list, verification table):
+[fixtures/universe-rescan-pinned-window-20260825.json](fixtures/universe-rescan-pinned-window-20260825.json).
+Read together with the correction rounds below: wallet-level inflows are
+abundant; *external endpoint settlement demand* remains the scarce thing this
+probe is built to measure.
 
 **Round 4 (same day): a payer provenance registry makes that false-positive
 class mechanical.** The reviewer proposed a registry of known platform payout
